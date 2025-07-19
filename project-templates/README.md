@@ -15,7 +15,8 @@ project-templates/
 │   ├── design-guidelines.md    # 設計ガイドライン
 │   └── best-practices.md       # 実装ベストプラクティス
 └── scripts/                     # 自動化スクリプト
-    └── project-init.ps1        # プロジェクト初期化スクリプト
+    ├── project-init.ps1        # プロジェクト初期化スクリプト
+    └── run_app_template.ps1    # アプリケーション実行スクリプトテンプレート
 ```
 
 ## 📚 ドキュメント一覧
@@ -43,6 +44,12 @@ project-templates/
    - プロジェクト構造の自動生成
    - 複数プロジェクトタイプ対応
    - Docker・テスト環境の自動セットアップ
+
+5. **[run_app_template.ps1](./scripts/run_app_template.ps1)**
+   - 高機能なアプリケーション実行スクリプト
+   - 仮想環境の自動管理
+   - ハッシュベースの依存関係管理
+   - Streamlit/FastAPI/Django自動判定
 
 ## 🚀 クイックスタート
 
@@ -102,7 +109,29 @@ cp .env.example .env
 # .envファイルを編集
 
 # アプリケーションの実行
+# 高機能PowerShellスクリプト使用（推奨）
+.\run_app.ps1 --env dev
+
+# または直接実行
 python main.py
+```
+
+### 🔧 run_app.ps1 の特徴
+
+生成されるプロジェクトには、高機能なアプリケーション実行スクリプト `run_app.ps1` が含まれます：
+
+- **🚀 自動環境管理**: 仮想環境の自動作成・有効化
+- **⚡ 高速起動**: ハッシュベースの依存関係管理（変更時のみインストール）
+- **🎯 アプリ自動判定**: Streamlit/FastAPI/Django を自動検出して適切に実行
+- **🛠️ 開発・本番モード**: 環境に応じたオプション切り替え
+- **📋 詳細ログ**: 実行状況の詳細な表示
+- **🔧 柔軟なオプション**: ポート、スクリプト、環境の指定可能
+
+```powershell
+# 使用例
+.\run_app.ps1 --env dev              # 開発環境で実行
+.\run_app.ps1 --env prd --port 8080  # 本番環境、ポート指定
+.\run_app.ps1 --help                 # ヘルプ表示
 ```
 
 ## 🎯 適用可能なプロジェクトタイプ

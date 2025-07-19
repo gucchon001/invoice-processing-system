@@ -264,6 +264,58 @@ docs/_build/
 "@
     
     Set-Content -Path (Join-Path $BasePath ".gitignore") -Value $gitignore -Encoding UTF8
+    
+    # run_app.ps1 テンプレートをコピー
+    Copy-RunAppTemplate -BasePath $BasePath -ProjectType $ProjectType
+}
+
+function Copy-RunAppTemplate {
+    param($BasePath, $ProjectType)
+    
+    Write-Log "run_app.ps1 テンプレートをコピー中..." "INFO"
+    
+    # テンプレートファイルのパス
+    $templatePath = Join-Path $PSScriptRoot "run_app_template.ps1"
+    $destinationPath = Join-Path $BasePath "run_app.ps1"
+    
+    if (Test-Path $templatePath) {
+        # テンプレートファイルの内容を読み込み
+        $templateContent = Get-Content $templatePath -Raw -Encoding UTF8
+        
+        # プロジェクト固有の設定を置換
+        $customizedContent = $templateContent -replace 'My Application', $ProjectName
+        
+        # プロジェクトタイプに応じたポート設定
+        switch ($ProjectType) {
+            "streamlit" { 
+                $customizedContent = $customizedContent -replace '\$DEFAULT_PORT = 8501', '$DEFAULT_PORT = 8501'
+                $customizedContent = $customizedContent -replace '"app\.py"', '"app.py"'
+            }
+            "fastapi" { 
+                $customizedContent = $customizedContent -replace '\$DEFAULT_PORT = 8501', '$DEFAULT_PORT = 8000'
+                $customizedContent = $customizedContent -replace '"app\.py"', '"main.py"'
+            }
+            "django" { 
+                $customizedContent = $customizedContent -replace '\$DEFAULT_PORT = 8501', '$DEFAULT_PORT = 8000'
+                $customizedContent = $customizedContent -replace '"app\.py"', '"manage.py"'
+            }
+            default { 
+                $customizedContent = $customizedContent -replace '\$DEFAULT_PORT = 8501', '$DEFAULT_PORT = 8000'
+            }
+        }
+        
+        # Clean Architecture構造に対応したPYTHONPATH設定
+        if ($ProjectType -eq "streamlit" -or $ProjectType -eq "fastapi") {
+            $customizedContent = $customizedContent -replace '@\("src", "."\)', '@("src", ".")'
+        }
+        
+        # ファイルに書き込み
+        Set-Content -Path $destinationPath -Value $customizedContent -Encoding UTF8
+        Write-Log "run_app.ps1 が正常にコピーされました。" "SUCCESS"
+    }
+    else {
+        Write-Log "警告: run_app_template.ps1 が見つかりません。手動でコピーしてください。" "WARN"
+    }
 }
 
 function New-AppMainFile {
