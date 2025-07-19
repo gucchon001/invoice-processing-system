@@ -124,6 +124,35 @@ class DatabaseManager:
             logger.error(f"請求書作成でエラー: {e}")
             return None
     
+    def insert_invoice(self, invoice_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """統合ワークフロー用請求書データ挿入"""
+        try:
+            result = self.supabase.table('invoices').insert({
+                'supplier_name': invoice_data.get('supplier_name', ''),
+                'invoice_number': invoice_data.get('invoice_number', ''),
+                'invoice_date': invoice_data.get('invoice_date'),
+                'due_date': invoice_data.get('due_date'),
+                'total_amount': float(invoice_data.get('total_amount', 0)),
+                'tax_amount': float(invoice_data.get('tax_amount', 0)),
+                'currency': invoice_data.get('currency', 'JPY'),
+                'file_path': invoice_data.get('file_path', ''),
+                'file_name': invoice_data.get('file_name', ''),
+                'extracted_data': invoice_data.get('extracted_data', {}),
+                'created_by': invoice_data.get('created_by', ''),
+                'created_at': invoice_data.get('created_at'),
+                'status': invoice_data.get('status', 'extracted')
+            }).execute()
+            
+            if result.data and len(result.data) > 0:
+                logger.info(f"統合ワークフロー請求書挿入成功: {result.data[0]['id']}")
+                return result.data[0]
+            else:
+                raise Exception("データベースへの挿入に失敗しました")
+                
+        except Exception as e:
+            logger.error(f"統合ワークフロー請求書挿入でエラー: {e}")
+            raise e
+    
     def update_invoice(self, invoice_id: int, update_data: Dict[str, Any]) -> bool:
         """請求書データを更新"""
         try:
@@ -204,4 +233,6 @@ def ensure_user_exists(email: str, name: str, role: str = 'user') -> bool:
     user = db.get_user(email)
     if not user:
         return db.create_user(email, name, role)
-    return True 
+    return True
+
+ 

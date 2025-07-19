@@ -21,6 +21,7 @@ try:
     from infrastructure.database.database import get_database, test_database_connection
     from infrastructure.ai.gemini_helper import get_gemini_api, test_gemini_connection, generate_text_simple, extract_pdf_invoice_data
     from infrastructure.storage.google_drive_helper import get_google_drive, test_google_drive_connection, upload_pdf_to_drive, get_drive_files_list
+    from core.workflows.invoice_processing import InvoiceProcessingWorkflow, WorkflowStatus, WorkflowProgress, WorkflowResult
 except ImportError as e:
     st.error(f"モジュールのインポートに失敗しました: {e}")
     st.error("新しいディレクトリ構造でのインポートパスを確認してください。")
@@ -67,7 +68,8 @@ def render_sidebar(user_info):
             "⚙️ メール設定",
             "🔧 DB接続テスト",
             "🤖 Gemini APIテスト",
-            "☁️ Google Drive APIテスト"
+            "☁️ Google Drive APIテスト",
+            "🔄 統合ワークフローテスト"
         ]
         
         # 管理者の場合の追加メニュー（将来実装）
@@ -796,6 +798,273 @@ def render_google_drive_test_page():
             st.warning(f"⚠️ 一部テスト失敗 ({success_count}/{total_tests})")
 
 
+def render_integrated_workflow_test_page():
+    """統合ワークフローテストページ"""
+    st.markdown("## 🔄 統合ワークフローテスト")
+    
+    st.info("📋 PDF → AI抽出 → DB保存の完全な統合ワークフローをテストします。")
+    
+    # セッション状態の初期化
+    if "workflow_progress" not in st.session_state:
+        st.session_state.workflow_progress = []
+    if "workflow_result" not in st.session_state:
+        st.session_state.workflow_result = None
+    if "is_processing" not in st.session_state:
+        st.session_state.is_processing = False
+    
+    # ファイルアップローダー
+    st.markdown("### 📤 PDFファイル選択")
+    uploaded_file = st.file_uploader(
+        "請求書PDFファイルを選択してください",
+        type=['pdf'],
+        key="workflow_pdf_uploader"
+    )
+    
+    # ユーザー情報取得
+    user_info = get_current_user()
+    user_id = user_info.get('email', 'test@example.com') if user_info else 'test@example.com'
+    
+    # 処理実行ボタン
+    if uploaded_file is not None:
+        st.markdown("### 🚀 ワークフロー実行")
+        
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            if st.button("📋 統合ワークフロー開始", 
+                        disabled=st.session_state.is_processing,
+                        use_container_width=True):
+                
+                # セッション状態リセット
+                st.session_state.workflow_progress = []
+                st.session_state.workflow_result = None
+                st.session_state.is_processing = True
+                
+                # ワークフロー実行
+                execute_integrated_workflow(uploaded_file, user_id)
+        
+        with col2:
+            if st.button("🔄 リセット", use_container_width=True):
+                st.session_state.workflow_progress = []
+                st.session_state.workflow_result = None
+                st.session_state.is_processing = False
+                st.rerun()
+    
+    # 進捗表示
+    if st.session_state.workflow_progress:
+        render_workflow_progress()
+    
+    # 結果表示
+    if st.session_state.workflow_result:
+        render_workflow_result()
+    
+    # 説明セクション
+    st.divider()
+    st.markdown("### 📋 ワークフロー詳細")
+    
+    with st.expander("🔍 処理フローの詳細", expanded=False):
+        st.markdown("""
+        #### 📊 統合ワークフローの処理段階
+        
+        1. **📤 ファイルアップロード** (10-30%)
+           - PDFファイルをGoogle Driveにアップロード
+           - ファイル情報の取得と検証
+        
+        2. **🤖 AI情報抽出** (40-70%)
+           - Gemini APIを使用してPDFから請求書情報を抽出
+           - 供給者名、請求書番号、金額、日付などを識別
+        
+        3. **💾 データベース保存** (80-90%)
+           - 抽出された情報をSupabaseデータベースに保存
+           - インデックス作成と関連データの整合性確認
+        
+        4. **✅ 処理完了** (100%)
+           - 全工程の完了確認
+           - 処理時間の計測と結果の最終検証
+        
+        #### 🛠️ エラーハンドリング
+        - 各段階でのエラー検出と詳細メッセージ表示
+        - 処理中断時の状態保持
+        - リトライ機能（手動）
+        
+        #### 📈 リアルタイム進捗
+        - プログレスバーによる視覚的な進捗表示
+        - 各段階での詳細メッセージ
+        - タイムスタンプ付きログ表示
+        """)
+
+
+def execute_integrated_workflow(uploaded_file, user_id):
+    """統合ワークフロー実行"""
+    
+    # 進捗コールバック関数
+    def progress_callback(progress: WorkflowProgress):
+        st.session_state.workflow_progress.append({
+            'status': progress.status.value,
+            'step': progress.step,
+            'progress_percent': progress.progress_percent,
+            'message': progress.message,
+            'timestamp': progress.timestamp.strftime("%H:%M:%S"),
+            'details': progress.details
+        })
+        # リアルタイム更新のためのrerun
+        st.rerun()
+    
+    try:
+        # サービスの初期化
+        ai_service = get_gemini_api()
+        storage_service = get_google_drive()
+        database_service = get_database()
+        
+        # ワークフローインスタンス作成
+        workflow = InvoiceProcessingWorkflow(
+            ai_service=ai_service,
+            storage_service=storage_service,
+            database_service=database_service,
+            progress_callback=progress_callback
+        )
+        
+        # PDFデータ取得
+        pdf_data = uploaded_file.read()
+        filename = uploaded_file.name
+        
+        # ワークフロー実行
+        result = workflow.process_invoice(pdf_data, filename, user_id)
+        
+        # 結果をセッション状態に保存
+        st.session_state.workflow_result = {
+            'success': result.success,
+            'invoice_id': result.invoice_id,
+            'extracted_data': result.extracted_data,
+            'file_info': result.file_info,
+            'error_message': result.error_message,
+            'processing_time': result.processing_time
+        }
+        
+    except Exception as e:
+        st.session_state.workflow_result = {
+            'success': False,
+            'error_message': f"ワークフロー実行エラー: {str(e)}"
+        }
+    
+    finally:
+        st.session_state.is_processing = False
+
+
+def render_workflow_progress():
+    """ワークフロー進捗表示"""
+    st.markdown("### 📊 処理進捗")
+    
+    if not st.session_state.workflow_progress:
+        return
+    
+    # 最新の進捗情報
+    latest_progress = st.session_state.workflow_progress[-1]
+    
+    # プログレスバー
+    progress_percent = latest_progress['progress_percent']
+    st.progress(progress_percent / 100.0)
+    
+    # 現在のステータス
+    status_color = {
+        'uploading': '🔄',
+        'processing': '🤖', 
+        'saving': '💾',
+        'completed': '✅',
+        'failed': '❌'
+    }
+    
+    status_icon = status_color.get(latest_progress['status'], '⏳')
+    st.markdown(f"**{status_icon} {latest_progress['step']}** - {latest_progress['message']} ({progress_percent}%)")
+    
+    # 進捗履歴（展開可能）
+    with st.expander(f"📝 詳細ログ ({len(st.session_state.workflow_progress)}件)", expanded=False):
+        for i, progress in enumerate(reversed(st.session_state.workflow_progress)):
+            icon = status_color.get(progress['status'], '⏳')
+            st.write(f"{icon} **[{progress['timestamp']}]** {progress['step']} - {progress['message']}")
+            
+            # 詳細情報があれば表示
+            if progress.get('details'):
+                with st.expander(f"詳細情報 #{len(st.session_state.workflow_progress)-i}", expanded=False):
+                    st.json(progress['details'])
+
+
+def render_workflow_result():
+    """ワークフロー結果表示"""
+    st.markdown("### 📊 処理結果")
+    
+    result = st.session_state.workflow_result
+    
+    if result['success']:
+        st.success("🎉 統合ワークフロー処理が正常に完了しました！")
+        
+        # 処理サマリー
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("請求書ID", result.get('invoice_id', 'N/A'))
+        
+        with col2:
+            processing_time = result.get('processing_time', 0)
+            st.metric("処理時間", f"{processing_time:.2f}秒")
+        
+        with col3:
+            st.metric("ステータス", "✅ 完了")
+        
+        # 抽出データ表示
+        if result.get('extracted_data'):
+            st.markdown("#### 📋 抽出された請求書情報")
+            
+            extracted_data = result['extracted_data']
+            
+            # 主要情報を表形式で表示
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**📊 基本情報**")
+                st.write(f"• 供給者名: {extracted_data.get('supplier_name', 'N/A')}")
+                st.write(f"• 請求書番号: {extracted_data.get('invoice_number', 'N/A')}")
+                st.write(f"• 通貨: {extracted_data.get('currency', 'JPY')}")
+            
+            with col2:
+                st.write("**💰 金額情報**")
+                st.write(f"• 合計金額: ¥{extracted_data.get('total_amount', 0):,}")
+                st.write(f"• 税額: ¥{extracted_data.get('tax_amount', 0):,}")
+                st.write(f"• 請求日: {extracted_data.get('invoice_date', 'N/A')}")
+            
+            # 詳細データ（JSON）
+            with st.expander("🔍 抽出データ詳細（JSON）", expanded=False):
+                st.json(extracted_data)
+        
+        # ファイル情報
+        if result.get('file_info'):
+            st.markdown("#### 📁 ファイル情報")
+            file_info = result['file_info']
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"• ファイル名: {file_info.get('name', 'N/A')}")
+                st.write(f"• ファイルID: {file_info.get('id', 'N/A')}")
+            
+            with col2:
+                if 'webViewLink' in file_info:
+                    st.markdown(f"• [📄 Google Driveで表示]({file_info['webViewLink']})")
+                
+                if 'downloadUrl' in file_info:
+                    st.markdown(f"• [⬇️ ダウンロード]({file_info['downloadUrl']})")
+    
+    else:
+        st.error("❌ 統合ワークフロー処理に失敗しました")
+        
+        error_message = result.get('error_message', '不明なエラー')
+        st.error(f"エラー詳細: {error_message}")
+        
+        # 処理時間（失敗時も表示）
+        processing_time = result.get('processing_time', 0)
+        if processing_time > 0:
+            st.info(f"⏱️ 処理時間: {processing_time:.2f}秒")
+
+
 def render_main_content(selected_menu, user_info):
     """メインコンテンツエリアをレンダリング"""
     
@@ -816,6 +1085,9 @@ def render_main_content(selected_menu, user_info):
     
     elif selected_menu == "☁️ Google Drive APIテスト":
         render_google_drive_test_page()
+    
+    elif selected_menu == "🔄 統合ワークフローテスト":
+        render_integrated_workflow_test_page()
     
     else:
         # デフォルト画面
