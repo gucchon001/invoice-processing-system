@@ -1,0 +1,90 @@
+# 請求書処理自動化システム開発ルール
+
+## システム情報
+- OS: Windows 11 (PowerShell環境)
+- 開発言語: Python, Streamlit
+- データベース: Supabase
+- AI: Gemini API
+
+## 必須：PowerShell コマンドルール
+**CRITICAL: ユーザーはWindows PowerShellを使用しています。以下を厳守してください：**
+
+1. **絶対に `&&` を使用しない**
+   - PowerShellでは `&&` がサポートされていません
+   - 代わりに `;` を使用するか、複数のコマンドに分割する
+
+2. **PowerShell推奨コマンド形式：**
+   ```powershell
+   # 良い例（セミコロンを使用）
+   cd docs; Rename-Item "要件定義書.md" "1_要件定義書.md"
+   
+   # 良い例（個別コマンド）
+   cd docs
+   Rename-Item "要件定義書.md" "1_要件定義書.md"
+   
+   # 悪い例（使用禁止）
+   cd docs && Rename-Item "要件定義書.md" "1_要件定義書.md"
+   ```
+
+3. **ファイル操作にはPowerShell固有コマンドレットを使用：**
+   - `mv` → `Rename-Item`
+   - `cp` → `Copy-Item`
+   - `rm` → `Remove-Item`
+   - `ls` → `Get-ChildItem`
+
+## PowerShell ファイル操作のベストプラクティス
+
+### 確実なファイル操作手順
+1. **常にディレクトリ移動とコマンドを一つにまとめる：**
+   ```powershell
+   cd target_directory; Get-ChildItem
+   cd target_directory; Rename-Item "old_name" "new_name"
+   ```
+
+2. **ファイル名の存在確認を先に行う：**
+   ```powershell
+   cd docs; Get-ChildItem | Where-Object {$_.Name -like "*検索パターン*"}
+   ```
+
+3. **複数ファイル操作は一つのコマンドラインで完結させる：**
+   ```powershell
+   cd docs; Rename-Item "file1.md" "1_file1.md"; Rename-Item "file2.md" "2_file2.md"
+   ```
+
+4. **日本語ファイル名は正確な文字を使用する：**
+   - 中点は「・」を使用
+   - 長音は「ー」を使用
+   - ワイルドカード検索を活用: `Get-ChildItem "*運用*"`
+
+### エラー回避ルール
+- **並列コマンド実行禁止**: 一度に複数のターミナルコマンドを実行しない
+- **ディレクトリ移動確認**: 毎回 `cd target_directory;` を先頭に付ける
+- **ファイル存在確認**: リネーム前に `Get-ChildItem` で確認
+- **文字エンコーディング**: 日本語ファイル名は慎重に扱う
+
+## 開発言語固有ルール
+
+### Python
+- Streamlitベースのアプリケーション開発
+- Supabase（PostgreSQL）との連携
+- Google Drive API、Gemini APIとの統合
+- 型ヒントを必須とする
+
+### 出力形式
+- 日本語でのコメントと説明
+- ドキュメントは日本語で作成
+
+## 禁止事項
+- PowerShellで `&&` オペレーターの使用
+- Bashコマンドの混用
+- 非インタラクティブフラグの省略
+- 並列ターミナルコマンドの実行
+- ディレクトリ移動なしでのファイル操作
+
+## 設計原則
+- フェーズ1: 基盤構築（データベース、認証）
+- フェーズ2: コア機能（PDF処理、AI連携）
+- フェーズ3: UI/UX（ダッシュボード、管理画面）
+- フェーズ4: テスト・デプロイ
+
+このルールに従って、一貫性のあるWindows PowerShell対応のコマンドを提供してください。
