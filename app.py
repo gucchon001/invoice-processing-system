@@ -20,6 +20,7 @@ try:
     from auth.oauth_handler import require_auth, get_current_user, logout, is_authenticated
     from database import get_database, test_database_connection
     from gemini_helper import get_gemini_api, test_gemini_connection, generate_text_simple, extract_pdf_invoice_data
+    from google_drive_helper import get_google_drive, test_google_drive_connection, upload_pdf_to_drive, get_drive_files_list
 except ImportError as e:
     st.error(f"認証モジュールのインポートに失敗しました: {e}")
     st.error("auth/oauth_handler.py が存在し、適切に設定されているか確認してください。")
@@ -65,7 +66,8 @@ def render_sidebar(user_info):
             "📊 処理状況ダッシュボード", 
             "⚙️ メール設定",
             "🔧 DB接続テスト",
-            "🤖 Gemini APIテスト"
+            "🤖 Gemini APIテスト",
+            "☁️ Google Drive APIテスト"
         ]
         
         # 管理者の場合の追加メニュー（将来実装）
@@ -593,6 +595,207 @@ def render_gemini_test_page():
                 st.error(f"プロンプト実行エラー: {e}")
 
 
+def render_google_drive_test_page():
+    """Google Drive APIテスト画面"""
+    st.markdown("## ☁️ Google Drive APIテスト")
+    
+    st.info("🔧 Google Drive API接続とファイルアップロード機能のテストを行います。")
+    
+    # 現在の設定表示
+    st.markdown("### ⚙️ 現在の設定")
+    
+    # サービスアカウント情報表示
+    try:
+        client_email = st.secrets["google_drive"]["client_email"]
+        project_id = st.secrets["google_drive"]["project_id"]
+        st.write(f"**サービスアカウント:** {client_email}")
+        st.write(f"**プロジェクトID:** {project_id}")
+    except KeyError as e:
+        st.error(f"❌ Google Drive API設定が不完全です: {e}")
+        st.markdown("""
+        **必要な設定項目:**
+        - `google_drive.type`
+        - `google_drive.project_id`
+        - `google_drive.private_key_id`
+        - `google_drive.private_key`
+        - `google_drive.client_email`
+        - `google_drive.client_id`
+        - `google_drive.auth_uri`
+        - `google_drive.token_uri`
+        - `google_drive.auth_provider_x509_cert_url`
+        - `google_drive.client_x509_cert_url`
+        """)
+        return
+    
+    # 接続テスト
+    st.markdown("### 🔗 基本接続テスト")
+    
+    if st.button("接続テスト実行", key="drive_connection_test"):
+        with st.spinner("Google Drive API接続をテスト中..."):
+            if test_google_drive_connection():
+                st.success("✅ Google Drive API接続成功！")
+            else:
+                st.error("❌ Google Drive API接続失敗")
+                return
+    
+    st.divider()
+    
+    # ファイルアップロードテスト
+    st.markdown("### 📤 ファイルアップロードテスト")
+    
+    uploaded_files = st.file_uploader(
+        "テスト用ファイルをアップロード（PDF推奨）",
+        type=['pdf', 'txt', 'docx', 'xlsx'],
+        accept_multiple_files=True,
+        key="drive_upload_test"
+    )
+    
+    if uploaded_files:
+        st.write(f"**選択されたファイル数:** {len(uploaded_files)}")
+        
+        for uploaded_file in uploaded_files:
+            st.markdown(f"#### 📄 ファイル: {uploaded_file.name}")
+            st.write(f"**ファイルサイズ:** {uploaded_file.size / 1024:.1f}KB")
+            st.write(f"**ファイルタイプ:** {uploaded_file.type}")
+            
+            if st.button(f"Google Driveにアップロード", key=f"upload_{uploaded_file.name}"):
+                with st.spinner(f"「{uploaded_file.name}」をGoogle Driveにアップロード中..."):
+                    try:
+                        # ファイル内容を読み込み
+                        file_content = uploaded_file.read()
+                        
+                        # Google Driveにアップロード
+                        upload_result = upload_pdf_to_drive(file_content, uploaded_file.name)
+                        
+                        if upload_result:
+                            st.success("✅ ファイルアップロード成功！")
+                            
+                            # アップロード結果表示
+                            st.markdown("#### 📋 アップロード結果")
+                            st.write(f"**ファイルID:** {upload_result['file_id']}")
+                            st.write(f"**ファイル名:** {upload_result['filename']}")
+                            st.write(f"**Google DriveのURL:** {upload_result['file_url']}")
+                            
+                            # URLリンク
+                            st.markdown(f"[📄 Google Driveで開く]({upload_result['file_url']})")
+                            
+                        else:
+                            st.error("❌ ファイルアップロードに失敗しました")
+                            
+                    except Exception as e:
+                        st.error(f"❌ アップロード処理でエラーが発生しました: {e}")
+    
+    st.divider()
+    
+    # ファイル一覧取得テスト
+    st.markdown("### 📋 ファイル一覧取得テスト")
+    
+    if st.button("Google Driveのファイル一覧を取得", key="drive_list_files"):
+        with st.spinner("Google Driveからファイル一覧を取得中..."):
+            try:
+                files_list = get_drive_files_list()
+                
+                if files_list:
+                    st.success(f"✅ ファイル一覧取得成功！（{len(files_list)}件）")
+                    
+                    # ファイル一覧をテーブル表示
+                    import pandas as pd
+                    
+                    # データフレーム用のデータ準備
+                    df_data = []
+                    for file_info in files_list:
+                        df_data.append({
+                            'ファイル名': file_info.get('name', 'N/A'),
+                            'ファイルタイプ': file_info.get('mimeType', 'N/A'),
+                            'サイズ(KB)': round(int(file_info.get('size', 0)) / 1024, 1) if file_info.get('size') else 'N/A',
+                            '作成日時': file_info.get('createdTime', 'N/A')[:10] if file_info.get('createdTime') else 'N/A',
+                            'Google DriveのURL': file_info.get('webViewLink', 'N/A')
+                        })
+                    
+                    if df_data:
+                        df = pd.DataFrame(df_data)
+                        st.dataframe(df, use_container_width=True, hide_index=True)
+                    
+                    # 詳細情報（折りたたみ）
+                    with st.expander("📋 詳細なファイル情報（JSON）"):
+                        st.json(files_list)
+                        
+                else:
+                    st.info("📂 ファイルが見つかりませんでした")
+                    
+            except Exception as e:
+                st.error(f"❌ ファイル一覧取得でエラーが発生しました: {e}")
+    
+    st.divider()
+    
+    # 設定手順の説明
+    st.markdown("### 📋 設定手順")
+    st.markdown("""
+    1. **Google Cloud Console でサービスアカウント作成**
+       - https://console.cloud.google.com/ にアクセス
+       - プロジェクトを選択または作成
+       - 「IAMと管理」→「サービスアカウント」
+       - サービスアカウントを作成
+    
+    2. **Drive API有効化**
+       - 「APIとサービス」→「ライブラリ」
+       - 「Google Drive API」を検索して有効化
+    
+    3. **サービスアカウントキー生成**
+       - サービスアカウントの「キー」タブ
+       - 「キーを追加」→「新しいキーを作成」→「JSON」
+       - ダウンロードしたJSONの内容を `.streamlit/secrets.toml` に設定
+    
+    4. **共有ドライブ設定（重要）**
+       - 共有ドライブにサービスアカウントを**メンバーとして追加**
+       - サービスアカウントのメールアドレス: `{st.secrets.get("google_drive", {}).get("client_email", "設定されていません")}`
+       - 権限: 「編集者」または「管理者」
+       - フォルダIDを `google_drive.default_folder_id` に設定（オプション）
+    
+    📌 **共有ドライブ使用時の注意点:**
+    - サービスアカウントが共有ドライブのメンバーでない場合、アクセスできません
+    - 個人ドライブとは異なり、共有ドライブ専用のAPIパラメータを使用します
+    - このシステムは共有ドライブに対応しています（`supportsAllDrives=true`）
+    """)
+    
+    # 統合テストボタン
+    st.divider()
+    st.markdown("### 🚀 統合テスト")
+    
+    if st.button("📋 全機能統合テスト実行", key="drive_integration_test"):
+        st.markdown("#### 🔧 統合テスト実行中...")
+        
+        test_results = []
+        
+        # 1. 接続テスト
+        with st.spinner("1. 接続テスト..."):
+            connection_result = test_google_drive_connection()
+            test_results.append(("接続テスト", "✅ 成功" if connection_result else "❌ 失敗"))
+        
+        # 2. ファイル一覧取得テスト
+        with st.spinner("2. ファイル一覧取得テスト..."):
+            try:
+                files_list = get_drive_files_list()
+                files_test_result = len(files_list) >= 0  # 0件でも成功
+                test_results.append(("ファイル一覧取得", f"✅ 成功 ({len(files_list)}件)" if files_test_result else "❌ 失敗"))
+            except Exception:
+                test_results.append(("ファイル一覧取得", "❌ 失敗"))
+        
+        # 結果表示
+        st.markdown("#### 📊 テスト結果")
+        for test_name, result in test_results:
+            st.write(f"**{test_name}:** {result}")
+        
+        # 総合判定
+        success_count = sum(1 for _, result in test_results if "✅" in result)
+        total_tests = len(test_results)
+        
+        if success_count == total_tests:
+            st.success(f"🎉 全テスト成功！ ({success_count}/{total_tests})")
+        else:
+            st.warning(f"⚠️ 一部テスト失敗 ({success_count}/{total_tests})")
+
+
 def render_main_content(selected_menu, user_info):
     """メインコンテンツエリアをレンダリング"""
     
@@ -610,6 +813,9 @@ def render_main_content(selected_menu, user_info):
     
     elif selected_menu == "🤖 Gemini APIテスト":
         render_gemini_test_page()
+    
+    elif selected_menu == "☁️ Google Drive APIテスト":
+        render_google_drive_test_page()
     
     else:
         # デフォルト画面
