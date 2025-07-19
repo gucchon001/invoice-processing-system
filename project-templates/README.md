@@ -1,32 +1,45 @@
-# プロジェクトテンプレート集 - INDEX
+# Clean Architecture プロジェクトテンプレート集
 
 ## 📋 概要
 
-Clean Architecture原則に基づくPythonプロジェクトの構造テンプレートと設計ガイドライン集です。
-このテンプレート集を使用することで、他のプロジェクトでも同様の高品質な構造を素早く構築できます。
+Clean Architecture原則に基づくPythonプロジェクトの汎用テンプレート集です。
+このテンプレート集を使用することで、任意のプロジェクトで同様の高品質な構造を素早く構築できます。
+
+## 📁 テンプレート構造
+
+```
+project-templates/
+├── README.md                    # このファイル
+├── clean-architecture/          # Clean Architectureテンプレート
+│   ├── structure-template.md   # プロジェクト構造テンプレート
+│   ├── design-guidelines.md    # 設計ガイドライン
+│   └── best-practices.md       # 実装ベストプラクティス
+└── scripts/                     # 自動化スクリプト
+    └── project-init.ps1        # プロジェクト初期化スクリプト
+```
 
 ## 📚 ドキュメント一覧
 
 ### 🏗️ 基本構造テンプレート
-1. **[12_Pythonプロジェクト構造テンプレート.md](./12_Pythonプロジェクト構造テンプレート.md)**
+1. **[structure-template.md](./clean-architecture/structure-template.md)**
    - Clean Architectureディレクトリ構造
    - 各層の責務と実装例
    - 使用方法とセットアップ手順
 
 ### 🎯 設計ガイドライン
-2. **[13_Clean Architecture設計ガイドライン.md](./13_Clean%20Architecture設計ガイドライン.md)**
+2. **[design-guidelines.md](./clean-architecture/design-guidelines.md)**
    - Clean Architectureの基本原則
    - 依存関係逆転の実装方法
    - 各層の詳細な責務と実装パターン
 
 ### 💎 実装ベストプラクティス
-3. **[14_実装ベストプラクティス集.md](./14_実装ベストプラクティス集.md)**
+3. **[best-practices.md](./clean-architecture/best-practices.md)**
    - コーディングスタンダード
    - パフォーマンス最適化
    - テスト戦略とセキュリティ
 
 ### ⚙️ 自動化スクリプト
-4. **[PowerShellテンプレート_プロジェクト初期化版.ps1](./PowerShellテンプレート_プロジェクト初期化版.ps1)**
+4. **[project-init.ps1](./scripts/project-init.ps1)**
    - プロジェクト構造の自動生成
    - 複数プロジェクトタイプ対応
    - Docker・テスト環境の自動セットアップ
@@ -38,13 +51,13 @@ Clean Architecture原則に基づくPythonプロジェクトの構造テンプ�
 #### PowerShellスクリプトを使用（推奨）
 ```powershell
 # Streamlitプロジェクトの作成
-.\PowerShellテンプレート_プロジェクト初期化版.ps1 -ProjectName "my-invoice-app" -ProjectType "streamlit" -WithDocker -WithTests
+.\project-templates\scripts\project-init.ps1 -ProjectName "my-invoice-app" -ProjectType "streamlit" -WithDocker -WithTests
 
 # FastAPIプロジェクトの作成
-.\PowerShellテンプレート_プロジェクト初期化版.ps1 -ProjectName "my-api-service" -ProjectType "fastapi" -WithDocker -WithTests
+.\project-templates\scripts\project-init.ps1 -ProjectName "my-api-service" -ProjectType "fastapi" -WithDocker -WithTests
 
 # 基本Pythonプロジェクトの作成
-.\PowerShellテンプレート_プロジェクト初期化版.ps1 -ProjectName "my-python-project" -ProjectType "basic" -WithTests
+.\project-templates\scripts\project-init.ps1 -ProjectName "my-python-project" -ProjectType "basic" -WithTests
 ```
 
 #### 手動作成

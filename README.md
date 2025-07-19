@@ -32,12 +32,20 @@ invoice-processing-system/
 │   ├── utils/                   # ユーティリティ
 │   │   └── __init__.py
 │   └── __init__.py
+├── project-templates/           # 🔄 汎用テンプレート集
+│   ├── clean-architecture/      # Clean Architectureテンプレート
+│   │   ├── structure-template.md
+│   │   ├── design-guidelines.md
+│   │   └── best-practices.md
+│   ├── scripts/                 # プロジェクト初期化スクリプト
+│   │   └── project-init.ps1
+│   └── README.md               # テンプレート使用方法
 ├── tests/                       # テストコード
 ├── scripts/                     # 運用・デプロイスクリプト
 │   └── run_app.ps1
 ├── sql/                         # データベーススクリプト
 │   └── create_tables.sql
-├── docs/                        # ドキュメント
+├── docs/                        # プロジェクト固有ドキュメント
 ├── config/                      # 設定ファイル
 ├── .streamlit/                  # Streamlit設定
 ├── requirements.txt             # Python依存関係
@@ -119,6 +127,22 @@ pip install -r requirements.txt
 
 - `/docs` - 設計書・仕様書
 - 各モジュールの docstring - API仕様
+
+## 🔄 汎用テンプレート集
+
+このプロジェクトで使用したClean Architecture構造は、他のプロジェクトでも再利用可能な汎用テンプレートとして整理されています：
+
+- **[project-templates/](./project-templates/)** - Clean Architecture汎用テンプレート集
+  - [構造テンプレート](./project-templates/clean-architecture/structure-template.md) - プロジェクト構造の雛形
+  - [設計ガイドライン](./project-templates/clean-architecture/design-guidelines.md) - Clean Architectureの設計原則
+  - [ベストプラクティス](./project-templates/clean-architecture/best-practices.md) - 実装のベストプラクティス
+  - [自動初期化スクリプト](./project-templates/scripts/project-init.ps1) - 新規プロジェクト作成用
+
+### 新規プロジェクト作成例
+```powershell
+# Streamlitプロジェクトの作成
+.\project-templates\scripts\project-init.ps1 -ProjectName "new-project" -ProjectType "streamlit" -WithDocker -WithTests
+```
 
 ## 🧪 テスト
 
