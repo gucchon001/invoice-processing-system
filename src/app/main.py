@@ -17,6 +17,31 @@ from datetime import datetime
 project_root = Path(__file__).parent.parent  # src/ ディレクトリ
 sys.path.insert(0, str(project_root))
 
+# ログ設定の初期化
+try:
+    from utils.log_config import setup_logging, get_logger, get_log_config
+    from utils.debug_panel import render_debug_panel, show_debug_info
+    setup_logging()  # 設定ファイルからログ設定を読み込み
+    logger = get_logger(__name__)
+    logger.info("請求書処理自動化システムが開始されました")
+    
+    # デバッグモードの確認
+    log_config = get_log_config()
+    if log_config.is_debug_mode():
+        logger.debug("デバッグモードが有効です")
+        
+except ImportError as e:
+    print(f"ログ設定モジュールのインポートに失敗しました: {e}")
+    # フォールバック設定
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    # デバッグパネル関数をダミーで定義
+    def render_debug_panel():
+        pass
+    def show_debug_info():
+        pass
+
 # 新しい構造でのモジュールインポート
 try:
     from infrastructure.auth.oauth_handler import require_auth, get_current_user, logout, is_authenticated
@@ -25,7 +50,9 @@ try:
     from infrastructure.storage.google_drive_helper import get_google_drive, test_google_drive_connection, upload_pdf_to_drive, get_drive_files_list
     from infrastructure.ui.aggrid_helper import get_aggrid_manager, test_aggrid_connection
     from core.workflows.invoice_processing import InvoiceProcessingWorkflow, WorkflowStatus, WorkflowProgress, WorkflowResult
+    logger.info("全モジュールのインポートが完了しました")
 except ImportError as e:
+    logger.error(f"モジュールのインポートに失敗しました: {e}")
     st.error(f"モジュールのインポートに失敗しました: {e}")
     st.error("新しいディレクトリ構造でのインポートパスを確認してください。")
     st.stop()
@@ -1435,9 +1462,15 @@ def main():
     # ページ設定
     configure_page()
     
+    # デバッグパネルの表示
+    render_debug_panel()
+    
     # タイトル
     st.title("📄 請求書処理自動化システム")
     st.markdown("---")
+    
+    # デバッグ情報の表示（デバッグモード時のみ）
+    show_debug_info()
     
     # 認証チェック（認証されていない場合はログイン画面を表示）
     user_info = require_auth()
