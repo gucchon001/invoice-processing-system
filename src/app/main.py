@@ -867,128 +867,164 @@ def render_aggrid_test_page():
             st.markdown("#### 🔍 基本ag-gridテスト")
             aggrid_manager = get_aggrid_manager()
             
-            # 基本グリッド表示
-            basic_grid_response = aggrid_manager.create_basic_grid(
-                st.session_state.aggrid_sample_data.head(20),
-                editable_columns=['supplier_name', 'account_title', 'status'],
-                selection_mode='multiple'
-            )
-            
-            # 基本機能結果表示
-            if basic_grid_response and 'selected_rows' in basic_grid_response:
-                selected_count = len(basic_grid_response['selected_rows'])
-                if selected_count > 0:
-                    st.info(f"✅ 選択された行数: {selected_count}件")
+            try:
+                # 基本グリッド表示
+                basic_grid_response = aggrid_manager.create_basic_grid(
+                    st.session_state.aggrid_sample_data.head(20),
+                    editable_columns=['supplier_name', 'account_title', 'status'],
+                    selection_mode='multiple'
+                )
+                
+                # 基本機能結果表示
+                if basic_grid_response and hasattr(basic_grid_response, 'selected_rows') and basic_grid_response.selected_rows is not None:
+                    selected_count = len(basic_grid_response.selected_rows)
+                    if selected_count > 0:
+                        st.info(f"✅ 選択された行数: {selected_count}件")
+                        
+                        with st.expander("選択されたデータ詳細", expanded=False):
+                            st.dataframe(basic_grid_response.selected_rows)
+                    else:
+                        st.info("📋 データが表示されています。行を選択してテストしてください。")
+                else:
+                    st.info("📊 ag-gridが正常に表示されました。チェックボックスで行を選択できます。")
                     
-                    with st.expander("選択されたデータ詳細", expanded=False):
-                        st.dataframe(basic_grid_response['selected_rows'])
+            except Exception as e:
+                st.error(f"❌ 基本ag-gridテストでエラーが発生しました: {e}")
+                st.info("💡 ヒント: ページを再読み込みしてから再試行してください。")
         
         with tab2:
             st.markdown("#### ✏️ 高機能請求書編集グリッド")
             st.info("💡 セルをダブルクリックして編集、ドロップダウンで選択、チェックボックスで複数選択が可能です")
             
-            # 高機能編集グリッド
-            edit_grid_response = aggrid_manager.create_invoice_editing_grid(
-                st.session_state.aggrid_sample_data
-            )
-            
-            # 編集結果表示
-            if edit_grid_response:
-                st.markdown("#### 📊 編集結果サマリー")
+            try:
+                # 高機能編集グリッド
+                edit_grid_response = aggrid_manager.create_invoice_editing_grid(
+                    st.session_state.aggrid_sample_data
+                )
                 
-                col_edit1, col_edit2, col_edit3 = st.columns(3)
-                
-                with col_edit1:
-                    total_rows = len(edit_grid_response.get('data', []))
-                    st.metric("総データ件数", total_rows)
-                
-                with col_edit2:
-                    selected_rows = len(edit_grid_response.get('selected_rows', []))
-                    st.metric("選択行数", selected_rows)
-                
-                with col_edit3:
-                    st.metric("表示モード", "高機能編集")
-                
-                # 選択されたデータの操作
-                if edit_grid_response.get('selected_rows'):
-                    st.markdown("#### 🛠️ 選択データ操作")
+                # 編集結果表示
+                if edit_grid_response:
+                    st.markdown("#### 📊 編集結果サマリー")
                     
-                    col_op1, col_op2, col_op3 = st.columns(3)
+                    col_edit1, col_edit2, col_edit3 = st.columns(3)
                     
-                    with col_op1:
-                        if st.button("📋 選択データ詳細表示", use_container_width=True):
-                            st.markdown("##### 📊 選択されたデータ")
-                            selected_df = pd.DataFrame(edit_grid_response['selected_rows'])
-                            st.dataframe(selected_df, use_container_width=True)
+                    with col_edit1:
+                        data_count = 0
+                        if hasattr(edit_grid_response, 'data') and edit_grid_response.data is not None:
+                            data_count = len(edit_grid_response.data)
+                        st.metric("総データ件数", data_count)
                     
-                    with col_op2:
-                        if st.button("💾 データベース同期テスト", use_container_width=True):
-                            selected_df = pd.DataFrame(edit_grid_response['selected_rows'])
-                            db_test_result = aggrid_manager.test_database_integration(selected_df)
-                            
-                            if db_test_result['success']:
-                                st.success(f"✅ {db_test_result['message']}")
-                            else:
-                                st.error(f"❌ データベース同期テスト失敗: {db_test_result.get('error', '不明なエラー')}")
+                    with col_edit2:
+                        selected_count = 0
+                        if hasattr(edit_grid_response, 'selected_rows') and edit_grid_response.selected_rows is not None:
+                            selected_count = len(edit_grid_response.selected_rows)
+                        st.metric("選択行数", selected_count)
                     
-                    with col_op3:
-                        if st.button("📄 スプレッドシート出力テスト", use_container_width=True):
-                            selected_df = pd.DataFrame(edit_grid_response['selected_rows'])
-                            export_test_result = aggrid_manager.test_spreadsheet_export(selected_df)
-                            
-                            if export_test_result['success']:
-                                st.success(f"✅ {export_test_result['message']}")
-                            else:
-                                st.error(f"❌ スプレッドシート出力テスト失敗: {export_test_result.get('error', '不明なエラー')}")
+                    with col_edit3:
+                        st.metric("表示モード", "高機能編集")
+                    
+                    # 選択されたデータの操作
+                    if hasattr(edit_grid_response, 'selected_rows') and edit_grid_response.selected_rows and len(edit_grid_response.selected_rows) > 0:
+                        st.markdown("#### 🛠️ 選択データ操作")
+                        
+                        col_op1, col_op2, col_op3 = st.columns(3)
+                        
+                        with col_op1:
+                            if st.button("📋 選択データ詳細表示", use_container_width=True):
+                                st.markdown("##### 📊 選択されたデータ")
+                                selected_df = pd.DataFrame(edit_grid_response.selected_rows)
+                                st.dataframe(selected_df, use_container_width=True)
+                        
+                        with col_op2:
+                            if st.button("💾 データベース同期テスト", use_container_width=True):
+                                selected_df = pd.DataFrame(edit_grid_response.selected_rows)
+                                db_test_result = aggrid_manager.test_database_integration(selected_df)
+                                
+                                if db_test_result['success']:
+                                    st.success(f"✅ {db_test_result['message']}")
+                                else:
+                                    st.error(f"❌ データベース同期テスト失敗: {db_test_result.get('error', '不明なエラー')}")
+                        
+                        with col_op3:
+                            if st.button("📄 スプレッドシート出力テスト", use_container_width=True):
+                                selected_df = pd.DataFrame(edit_grid_response.selected_rows)
+                                export_test_result = aggrid_manager.test_spreadsheet_export(selected_df)
+                                
+                                if export_test_result['success']:
+                                    st.success(f"✅ {export_test_result['message']}")
+                                else:
+                                    st.error(f"❌ スプレッドシート出力テスト失敗: {export_test_result.get('error', '不明なエラー')}")
+                    else:
+                        st.info("📋 データが表示されています。チェックボックスで行を選択すると操作ボタンが表示されます。")
+                else:
+                    st.warning("⚠️ 高機能編集グリッドの表示に問題がありました。")
+                    
+            except Exception as e:
+                st.error(f"❌ 高機能編集グリッドでエラーが発生しました: {e}")
+                st.info("💡 ヒント: ページを再読み込みしてから再試行してください。")
         
         with tab3:
             st.markdown("#### 🔄 データ連携機能テスト")
             
-            # 全データでの連携テスト
-            st.markdown("##### 📊 全データ連携テスト")
-            
-            col_all1, col_all2 = st.columns(2)
-            
-            with col_all1:
-                if st.button("🗃️ 全データ → データベース同期テスト", use_container_width=True):
-                    with st.spinner("全データをデータベースに同期中..."):
-                        all_db_result = aggrid_manager.test_database_integration(st.session_state.aggrid_sample_data)
-                        
-                        if all_db_result['success']:
-                            st.success(f"✅ 全データ同期成功: {all_db_result['affected_rows']}件")
-                            
-                            # 結果詳細表示
-                            with st.expander("同期結果詳細", expanded=False):
-                                st.json(all_db_result)
-                        else:
-                            st.error(f"❌ 全データ同期失敗: {all_db_result.get('error', '不明なエラー')}")
-            
-            with col_all2:
-                if st.button("📊 全データ → スプレッドシート出力テスト", use_container_width=True):
-                    with st.spinner("全データをスプレッドシートに出力中..."):
-                        all_export_result = aggrid_manager.test_spreadsheet_export(st.session_state.aggrid_sample_data)
-                        
-                        if all_export_result['success']:
-                            st.success(f"✅ 全データ出力成功: {all_export_result['exported_rows']}件")
-                            
-                            # 結果詳細表示
-                            with st.expander("出力結果詳細", expanded=False):
-                                st.json(all_export_result)
-                        else:
-                            st.error(f"❌ 全データ出力失敗: {all_export_result.get('error', '不明なエラー')}")
-            
-            # CSVダウンロード
-            st.markdown("##### 💾 CSVダウンロードテスト")
-            
-            csv_data = st.session_state.aggrid_sample_data.to_csv(index=False, encoding='utf-8-sig')
-            
-            st.download_button(
-                label="📥 サンプルデータをCSVでダウンロード",
-                data=csv_data,
-                file_name=f"sample_invoice_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
+            try:
+                # 全データでの連携テスト
+                st.markdown("##### 📊 全データ連携テスト")
+                
+                col_all1, col_all2 = st.columns(2)
+                
+                with col_all1:
+                    if st.button("🗃️ 全データ → データベース同期テスト", use_container_width=True):
+                        with st.spinner("全データをデータベースに同期中..."):
+                            try:
+                                all_db_result = aggrid_manager.test_database_integration(st.session_state.aggrid_sample_data)
+                                
+                                if all_db_result['success']:
+                                    st.success(f"✅ 全データ同期成功: {all_db_result['affected_rows']}件")
+                                    
+                                    # 結果詳細表示
+                                    with st.expander("同期結果詳細", expanded=False):
+                                        st.json(all_db_result)
+                                else:
+                                    st.error(f"❌ 全データ同期失敗: {all_db_result.get('error', '不明なエラー')}")
+                            except Exception as e:
+                                st.error(f"❌ データベース同期テストでエラー: {e}")
+                
+                with col_all2:
+                    if st.button("📊 全データ → スプレッドシート出力テスト", use_container_width=True):
+                        with st.spinner("全データをスプレッドシートに出力中..."):
+                            try:
+                                all_export_result = aggrid_manager.test_spreadsheet_export(st.session_state.aggrid_sample_data)
+                                
+                                if all_export_result['success']:
+                                    st.success(f"✅ 全データ出力成功: {all_export_result['exported_rows']}件")
+                                    
+                                    # 結果詳細表示
+                                    with st.expander("出力結果詳細", expanded=False):
+                                        st.json(all_export_result)
+                                else:
+                                    st.error(f"❌ 全データ出力失敗: {all_export_result.get('error', '不明なエラー')}")
+                            except Exception as e:
+                                st.error(f"❌ スプレッドシート出力テストでエラー: {e}")
+                
+                # CSVダウンロード
+                st.markdown("##### 💾 CSVダウンロードテスト")
+                
+                try:
+                    csv_data = st.session_state.aggrid_sample_data.to_csv(index=False, encoding='utf-8-sig')
+                    
+                    st.download_button(
+                        label="📥 サンプルデータをCSVでダウンロード",
+                        data=csv_data,
+                        file_name=f"sample_invoice_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                except Exception as e:
+                    st.error(f"❌ CSVダウンロード準備でエラー: {e}")
+                    
+            except Exception as e:
+                st.error(f"❌ データ連携テストでエラーが発生しました: {e}")
+                st.info("💡 ヒント: ページを再読み込みしてから再試行してください。")
     
     # 技術仕様説明
     st.divider()
