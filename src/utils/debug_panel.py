@@ -1,265 +1,171 @@
 """
-デバッグパネル - Streamlitアプリ内でログとデバッグ設定を管理
-
-設定ファイルの内容を表示し、一時的な設定変更も可能にする。
+デバッグパネル - 開発時の状態確認用
 """
-
 import streamlit as st
-import configparser
-import os
-from pathlib import Path
-import tempfile
-from .log_config import get_log_config, setup_logging
-
+import json
+from datetime import datetime
 
 def render_debug_panel():
-    """デバッグパネルをレンダリング"""
-    if 'show_debug_panel' not in st.session_state:
-        st.session_state.show_debug_panel = False
-        
-    # デバッグパネルの表示切り替え
-    with st.sidebar:
-        if st.button("🔧 デバッグパネル" + (" 🔽" if st.session_state.show_debug_panel else " ▶️")):
-            st.session_state.show_debug_panel = not st.session_state.show_debug_panel
-            
-    if st.session_state.show_debug_panel:
-        render_debug_content()
-
-
-def render_debug_content():
-    """デバッグパネルの内容をレンダリング"""
-    with st.sidebar:
-        st.markdown("---")
-        st.markdown("### 🔧 デバッグ設定")
-        
-        try:
-            log_config = get_log_config()
-            
-            # 現在の設定表示
-            with st.expander("📊 現在の設定", expanded=True):
-                st.markdown("**ログレベル:**")
-                current_level = log_config.config.get('logging', 'log_level', fallback='INFO')
-                st.code(current_level)
-                
-                st.markdown("**デバッグモード:**")
-                debug_mode = log_config.is_debug_mode()
-                st.code(str(debug_mode))
-                
-                st.markdown("**環境:**")
-                environment = log_config.get_environment()
-                st.code(environment)
-                
-                st.markdown("**ログファイル出力:**")
-                file_logging = log_config.config.getboolean('logging', 'enable_file_logging', fallback=True)
-                st.code(str(file_logging))
-                
-            # 一時的な設定変更
-            with st.expander("⚙️ 一時設定変更"):
-                st.markdown("**注意:** この変更は現在のセッションのみ有効です")
-                
-                # ログレベル変更
-                new_log_level = st.selectbox(
-                    "ログレベル",
-                    options=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
-                    index=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'].index(current_level),
-                    key="temp_log_level"
-                )
-                
-                # デバッグモード切り替え
-                new_debug_mode = st.checkbox(
-                    "デバッグモード",
-                    value=debug_mode,
-                    key="temp_debug_mode"
-                )
-                
-                # デバッグカテゴリ
-                st.markdown("**デバッグカテゴリ:**")
-                categories = ['database', 'ai', 'gdrive', 'streamlit']
-                debug_categories = {}
-                
-                for category in categories:
-                    current_value = log_config.is_debug_enabled(category)
-                    debug_categories[category] = st.checkbox(
-                        f"{category.upper()} デバッグ",
-                        value=current_value,
-                        key=f"temp_{category}_debug"
-                    )
-                
-                # 設定適用ボタン
-                if st.button("🔄 一時設定を適用", key="apply_temp_settings"):
-                    apply_temp_settings(new_log_level, new_debug_mode, debug_categories)
-                    st.success("一時設定が適用されました")
-                    st.experimental_rerun()
-                    
-            # ログファイル表示
-            with st.expander("📋 ログファイル"):
-                display_log_files(log_config)
-                
-            # 設定ファイル表示
-            with st.expander("📄 設定ファイル内容"):
-                display_config_file(log_config)
-                
-        except Exception as e:
-            st.error(f"デバッグパネルでエラー: {e}")
-
-
-def apply_temp_settings(log_level: str, debug_mode: bool, debug_categories: dict):
-    """一時的な設定変更を適用"""
+    """デバッグパネルをレンダリング（メイン関数）"""
     try:
-        log_config = get_log_config()
+        # ログイン状態を確認
+        from infrastructure.auth.oauth_handler import get_current_user
+        user_info = get_current_user()
         
-        # 設定を一時的に変更
-        log_config.config.set('logging', 'log_level', log_level)
-        log_config.config.set('debug', 'debug_mode', str(debug_mode).lower())
-        
-        for category, enabled in debug_categories.items():
-            log_config.config.set('debug', f'{category}_debug', str(enabled).lower())
+        # ログインしていない場合はデバッグパネルを表示しない
+        if not user_info:
+            return
             
-        # ログ設定を再セットアップ
-        log_config._setup_logging()
-        
-        # セッション状態に保存
-        st.session_state.temp_settings_applied = True
-        
-    except Exception as e:
-        st.error(f"設定適用エラー: {e}")
+        show_debug_panel()
+    except Exception:
+        pass
 
-
-def display_log_files(log_config):
-    """ログファイルの内容を表示"""
-    try:
-        log_file_path = log_config.config.get('logging', 'log_file_path', fallback='logs/app.log')
-        
-        if os.path.exists(log_file_path):
-            # ファイルサイズ表示
-            file_size = os.path.getsize(log_file_path)
-            st.markdown(f"**ファイルサイズ:** {file_size:,} bytes")
-            
-            # 最新のログを表示
-            lines_to_show = st.slider("表示行数", 10, 200, 50, key="log_lines")
-            
-            try:
-                with open(log_file_path, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
-                    recent_lines = lines[-lines_to_show:] if len(lines) > lines_to_show else lines
-                    
-                if recent_lines:
-                    st.code(''.join(recent_lines), language='text')
-                else:
-                    st.info("ログファイルは空です")
-                    
-            except UnicodeDecodeError:
-                # UTF-8で読めない場合はshift_jisで試行
-                with open(log_file_path, 'r', encoding='shift_jis') as f:
-                    lines = f.readlines()
-                    recent_lines = lines[-lines_to_show:] if len(lines) > lines_to_show else lines
-                    st.code(''.join(recent_lines), language='text')
-                    
-            # ログクリアボタン
-            if st.button("🗑️ ログファイルをクリア", key="clear_log"):
-                try:
-                    open(log_file_path, 'w').close()
-                    st.success("ログファイルがクリアされました")
-                    st.experimental_rerun()
-                except Exception as e:
-                    st.error(f"ログクリアエラー: {e}")
-        else:
-            st.info("ログファイルが見つかりません")
-            
-    except Exception as e:
-        st.error(f"ログファイル表示エラー: {e}")
-
-
-def display_config_file(log_config):
-    """設定ファイルの内容を表示"""
-    try:
-        if os.path.exists(log_config.config_path):
-            with open(log_config.config_path, 'r', encoding='utf-8') as f:
-                config_content = f.read()
-            st.code(config_content, language='ini')
-            
-            # 設定ファイル編集
-            if st.button("📝 設定ファイルを編集", key="edit_config"):
-                st.session_state.show_config_editor = True
-                
-            if st.session_state.get('show_config_editor', False):
-                render_config_editor(log_config.config_path)
-        else:
-            st.warning("設定ファイルが見つかりません")
-            
-    except Exception as e:
-        st.error(f"設定ファイル表示エラー: {e}")
-
-
-def render_config_editor(config_path: str):
-    """設定ファイルエディター"""
-    st.markdown("### 📝 設定ファイル編集")
-    
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            current_content = f.read()
-            
-        # テキストエリアで編集
-        new_content = st.text_area(
-            "設定内容",
-            value=current_content,
-            height=300,
-            key="config_editor"
-        )
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("💾 保存", key="save_config"):
-                try:
-                    with open(config_path, 'w', encoding='utf-8') as f:
-                        f.write(new_content)
-                    st.success("設定ファイルが保存されました")
-                    st.session_state.show_config_editor = False
-                    # ログ設定を再読み込み
-                    setup_logging()
-                    st.experimental_rerun()
-                except Exception as e:
-                    st.error(f"保存エラー: {e}")
-                    
-        with col2:
-            if st.button("❌ キャンセル", key="cancel_edit"):
-                st.session_state.show_config_editor = False
-                st.experimental_rerun()
-                
-        with col3:
-            if st.button("🔄 リロード", key="reload_config"):
-                try:
-                    setup_logging()
-                    st.success("設定が再読み込みされました")
-                    st.experimental_rerun()
-                except Exception as e:
-                    st.error(f"リロードエラー: {e}")
-                    
-    except Exception as e:
-        st.error(f"エディターエラー: {e}")
-
-
-# デバッグ情報の表示
-def show_debug_info():
+def show_debug_panel():
     """デバッグ情報を表示"""
-    try:
-        log_config = get_log_config()
+    if not st.secrets.get("app", {}).get("debug", False):
+        return
         
-        if log_config.is_debug_mode():
-            with st.expander("🐛 デバッグ情報", expanded=False):
-                st.markdown("**セッション状態:**")
-                st.json(dict(st.session_state))
+    with st.expander("🔧 デバッグパネル", expanded=False):
+        st.subheader("セッション状態")
+        
+        # SessionState クリーンアップボタン
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🧹 セッション状態をクリア", key="debug_clear_session_state"):
+                # デバッグ関連のキーのみクリア
+                keys_to_remove = [k for k in st.session_state.keys() if k.startswith('debug_')]
+                for key in keys_to_remove:
+                    del st.session_state[key]
+                st.success("✅ デバッグ関連セッション状態をクリアしました")
+                st.rerun()
+        
+        with col2:
+            if st.button("🗑️ 全セッション状態をクリア", key="debug_clear_all_session_state"):
+                st.session_state.clear()
+                st.success("✅ 全セッション状態をクリアしました")
+                st.rerun()
+        
+        # OCRテスト結果の確認
+        if "ocr_test_results" in st.session_state:
+            st.write("✅ OCRテスト結果あり")
+            results = st.session_state.ocr_test_results
+            st.json({
+                "total_files": results.get("total_files", 0),
+                "files_processed": results.get("files_processed", 0),
+                "files_success": results.get("files_success", 0),
+                "files_failed": results.get("files_failed", 0),
+                "results_count": len(results.get("results", []))
+            })
+        else:
+            st.write("❌ OCRテスト結果なし")
+        
+        # データベースセッション履歴の確認
+        st.subheader("データベース履歴確認")
+        
+        # SessionStateでボタンの重複実行を防ぐ
+        if 'debug_session_check_executed' not in st.session_state:
+            st.session_state.debug_session_check_executed = False
+        
+        if st.button("🔍 OCRテストセッション履歴を確認", key="debug_check_sessions_btn"):
+            st.session_state.debug_session_check_executed = True
+        
+        # 結果の表示
+        if st.session_state.debug_session_check_executed:
+            try:
+                # Service Role Keyを使用してRLS回避
+                try:
+                    service_key = st.secrets["database"]["supabase_service_key"]
+                    supabase_url = st.secrets["database"]["supabase_url"]
+                    
+                    from supabase import create_client
+                    service_supabase = create_client(supabase_url, service_key)
+                    
+                    st.info("🔑 Service Role Keyを使用してデータベース接続")
+                    
+                except Exception as e:
+                    st.warning(f"Service Role Key使用失敗、通常キーで試行: {e}")
+                    from infrastructure.database.database import get_database
+                    database = get_database()
+                    service_supabase = database.supabase
                 
-                st.markdown("**環境変数:**")
-                env_vars = {k: v for k, v in os.environ.items() if not k.startswith('_')}
-                st.json(env_vars)
+                # 現在のユーザー情報取得
+                from infrastructure.auth.oauth_handler import get_current_user
+                user_info = get_current_user()
+                user_email = user_info.get('email', '') if user_info else ''
                 
-                st.markdown("**設定情報:**")
-                config_dict = {}
-                for section in log_config.config.sections():
-                    config_dict[section] = dict(log_config.config[section])
-                st.json(config_dict)
+                st.write(f"**検索対象ユーザー:** {user_email}")
                 
-    except Exception as e:
-        st.error(f"デバッグ情報表示エラー: {e}") 
+                if user_email:
+                    # セッション履歴を直接取得
+                    response = service_supabase.table("ocr_test_sessions").select("*").eq("created_by", user_email).order("created_at", desc=True).limit(10).execute()
+                    
+                    st.write(f"**クエリ結果:** レスポンス受信")
+                    st.write(f"**データ数:** {len(response.data) if response.data else 0}")
+                    
+                    if response.data:
+                        st.success(f"✅ {len(response.data)}件のセッション履歴が見つかりました")
+                        
+                        for i, session in enumerate(response.data):
+                            with st.expander(f"セッション {i+1}: {session.get('id', 'N/A')[:8]}..."):
+                                st.json(session)
+                    else:
+                        st.warning("⚠️ セッション履歴がありません")
+                        
+                        # 全セッション確認（デバッグ用）
+                        st.write("**全セッション確認（デバッグ）:**")
+                        all_response = service_supabase.table("ocr_test_sessions").select("*").limit(5).execute()
+                        st.write(f"全セッション数: {len(all_response.data) if all_response.data else 0}")
+                        
+                        if all_response.data:
+                            st.write("最新5件:")
+                            for session in all_response.data[:5]:
+                                st.write(f"- ID: {session.get('id', 'N/A')[:8]}..., 作成者: {session.get('created_by', 'N/A')}")
+                else:
+                    st.error("❌ ユーザー情報が取得できません")
+                    
+            except Exception as e:
+                st.error(f"❌ データベース確認エラー: {e}")
+                import traceback
+                st.code(traceback.format_exc())
+            
+            # リセットボタン
+            if st.button("🔄 結果をクリア", key="debug_clear_results"):
+                st.session_state.debug_session_check_executed = False
+                st.rerun()
+        
+        # PDFファイル一覧の確認
+        if "pdf_files" in st.session_state:
+            st.write(f"✅ PDFファイル一覧: {len(st.session_state.pdf_files)}件")
+        else:
+            st.write("❌ PDFファイル一覧なし")
+        
+        # 全セッション状態のキー表示
+        st.write("**セッション状態キー一覧:**")
+        st.write(list(st.session_state.keys()))
+
+def show_ocr_results_debug():
+    """OCRテスト結果の詳細デバッグ表示"""
+    if not st.secrets.get("app", {}).get("debug", False):
+        return
+        
+    if "ocr_test_results" not in st.session_state:
+        st.warning("OCRテスト結果がセッション状態に保存されていません")
+        return
+        
+    with st.expander("📋 OCRテスト結果詳細", expanded=False):
+        results = st.session_state.ocr_test_results
+        
+        st.write("**テスト統計:**")
+        st.json({
+            "開始時刻": results.get("start_time"),
+            "終了時刻": results.get("end_time"),
+            "総ファイル数": results.get("total_files"),
+            "処理済み": results.get("files_processed"),
+            "成功": results.get("files_success"),
+            "失敗": results.get("files_failed")
+        })
+        
+        st.write("**処理結果:**")
+        for i, result in enumerate(results.get("results", [])):
+            with st.expander(f"ファイル {i+1}: {result.get('filename', 'unknown')}"):
+                st.json(result) 

@@ -20,7 +20,7 @@ sys.path.insert(0, str(project_root))
 # ログ設定の初期化
 try:
     from utils.log_config import setup_logging, get_logger, get_log_config
-    from utils.debug_panel import render_debug_panel, show_debug_info
+    from utils.debug_panel import show_debug_panel, show_ocr_results_debug, render_debug_panel
     setup_logging()  # 設定ファイルからログ設定を読み込み
     logger = get_logger(__name__)
     logger.info("請求書処理自動化システムが開始されました")
@@ -36,11 +36,9 @@ except ImportError as e:
     import logging
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
-    # デバッグパネル関数をダミーで定義
-    def render_debug_panel():
-        pass
-    def show_debug_info():
-        pass
+
+def show_debug_info():
+    pass
 
 # 新しい構造でのモジュールインポート
 try:
@@ -95,6 +93,7 @@ def render_sidebar(user_info):
         menu_options = [
             "📤 請求書アップロード",
             "📊 処理状況ダッシュボード", 
+            "🔍 OCR精度テスト (Gemini 2.0-flash)",
             "⚙️ メール設定",
             "🔧 DB接続テスト",
             "🤖 Gemini APIテスト",
@@ -146,53 +145,242 @@ def render_upload_page():
                 st.write(f"**サイズ:** {file.size:,} bytes")
                 st.write(f"**タイプ:** {file.type}")
         
+        # セッション状態の初期化
+        if "upload_progress" not in st.session_state:
+            st.session_state.upload_progress = []
+        if "upload_results" not in st.session_state:
+            st.session_state.upload_results = []
+        if "is_processing_upload" not in st.session_state:
+            st.session_state.is_processing_upload = False
+
         # 処理開始ボタン
         if st.button("🚀 AI処理を開始", type="primary", use_container_width=True):
-            with st.spinner("ファイルを処理中..."):
-                # TODO: 実際の処理ロジックを実装
-                st.success("✅ アップロードと処理を開始しました！")
-                st.info("📊 処理状況は「処理状況ダッシュボード」で確認できます。")
+            if not st.session_state.is_processing_upload:
+                st.session_state.is_processing_upload = True
+                st.session_state.upload_progress = []
+                st.session_state.upload_results = []
+                
+                # 現在のユーザー情報取得
+                user_info = get_current_user()
+                user_id = user_info.get('email', 'anonymous@example.com') if user_info else 'anonymous@example.com'
+                
+                # 複数ファイルの統合ワークフロー実行
+                execute_multiple_invoice_processing(uploaded_files, user_id)
+            else:
+                st.warning("現在処理中です。しばらくお待ちください。")
+
+        # 処理中の進捗表示
+        if st.session_state.is_processing_upload:
+            st.markdown("### 📊 処理進捗")
+            render_upload_progress()
+
+        # 処理結果表示
+        if st.session_state.upload_results and not st.session_state.is_processing_upload:
+            st.markdown("### 📋 処理結果")
+            render_upload_results()
 
 
 def render_dashboard_page():
-    """処理状況ダッシュボード画面"""
+    """処理状況ダッシュボード画面（ag-grid実装版）"""
     st.markdown("## 📊 処理状況ダッシュボード")
     
     st.info("📋 アップロードした請求書の処理状況を確認・編集できます。")
     
-    # サンプルデータ（TODO: 実際のデータベースから取得）
-    import pandas as pd
+    # 現在のユーザー情報取得
+    user_info = get_current_user()
+    user_email = user_info.get('email', '') if user_info else ''
     
-    sample_data = pd.DataFrame({
-        'ID': [1, 2, 3],
-        'ファイル名': ['invoice_001.pdf', 'invoice_002.pdf', 'invoice_003.pdf'],
-        '請求元': ['株式会社Example', 'Google LLC', 'Microsoft Corporation'],
-        '金額': [100000, 50000, 75000],
-        'ステータス': ['AI提案済み', '処理中', '要確認'],
-        'アップロード日時': ['2025-01-15 10:00', '2025-01-15 11:30', '2025-01-15 14:15']
-    })
+    if not user_email:
+        st.error("ユーザー情報が取得できません。再ログインしてください。")
+        return
     
-    # データ表示（将来はst.data_editorを使用予定）
-    st.dataframe(
-        sample_data,
-        use_container_width=True,
-        hide_index=True
-    )
-    
-    # 機能ボタン
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("🔄 データ更新", use_container_width=True):
-            st.success("データを更新しました")
-    
-    with col2:
-        if st.button("📄 PDFを確認", use_container_width=True):
-            st.info("PDF確認機能は実装予定です")
-    
-    with col3:
-        if st.button("💾 変更を保存", use_container_width=True):
-            st.success("変更を保存しました")
+    # データベースから請求書データを取得
+    try:
+        with st.spinner("データを読み込み中..."):
+            database = get_database()
+            invoices_data = database.get_invoices(user_email)
+            
+        if not invoices_data:
+            st.info("📄 まだ請求書データがありません。「📤 請求書アップロード」からファイルをアップロードしてください。")
+            
+            # アップロードページへのショートカット
+            if st.button("📤 請求書をアップロード", type="primary", use_container_width=True):
+                st.session_state.selected_menu = "📤 請求書アップロード"
+                st.rerun()
+            return
+        
+        # ag-gridでデータを表示・編集
+        render_invoice_aggrid(invoices_data)
+        
+    except Exception as e:
+        logger.error(f"ダッシュボードデータ取得エラー: {e}")
+        st.error(f"データの取得中にエラーが発生しました: {e}")
+        
+        # データ更新ボタン
+        if st.button("🔄 再試行", use_container_width=True):
+            st.rerun()
+
+
+def render_invoice_aggrid(invoices_data):
+    """請求書データのag-grid表示・編集"""
+    try:
+        # ag-gridマネージャーを取得
+        aggrid_manager = get_aggrid_manager()
+        
+        # データ前処理（ag-grid用にフォーマット）
+        processed_data = prepare_invoice_data_for_aggrid(invoices_data)
+        
+        if not processed_data:
+            st.warning("表示可能なデータがありません。")
+            return
+        
+        # ag-gridで表示・編集
+        st.markdown("### 📋 請求書一覧・編集")
+        
+        # ag-gridを表示（既存のcreate_invoice_editing_gridメソッドを使用）
+        grid_response = aggrid_manager.create_invoice_editing_grid(processed_data)
+        
+        # 選択行とデータ変更の処理
+        handle_grid_interactions(grid_response, invoices_data)
+        
+    except Exception as e:
+        logger.error(f"ag-grid表示エラー: {e}")
+        st.error(f"データ表示でエラーが発生しました: {e}")
+
+
+def prepare_invoice_data_for_aggrid(invoices_data):
+    """請求書データをag-grid用に前処理"""
+    try:
+        import pandas as pd
+        
+        # 基本データの準備
+        processed_rows = []
+        
+        for invoice in invoices_data:
+            # 抽出データから主要項目を取得
+            extracted_data = invoice.get('extracted_data', {}) or {}
+            
+            row = {
+                'id': invoice.get('id', ''),
+                'file_name': invoice.get('file_name', ''),
+                'supplier_name': (
+                    invoice.get('supplier_name') or 
+                    extracted_data.get('supplier_name') or 
+                    extracted_data.get('issuer', '')
+                ),
+                'invoice_number': (
+                    invoice.get('invoice_number') or
+                    extracted_data.get('invoice_number') or
+                    extracted_data.get('main_invoice_number', '')
+                ),
+                'invoice_date': (
+                    invoice.get('invoice_date') or
+                    extracted_data.get('invoice_date') or
+                    extracted_data.get('issue_date', '')
+                ),
+                'due_date': (
+                    invoice.get('due_date') or
+                    extracted_data.get('due_date', '')
+                ),
+                'total_amount': (
+                    invoice.get('total_amount') or
+                    extracted_data.get('total_amount') or
+                    extracted_data.get('amount_inclusive_tax', 0)
+                ),
+                'tax_amount': (
+                    invoice.get('tax_amount') or
+                    extracted_data.get('tax_amount', 0)
+                ),
+                'currency': (
+                    invoice.get('currency') or
+                    extracted_data.get('currency', 'JPY')
+                ),
+                'status': invoice.get('status', 'extracted'),
+                'created_at': invoice.get('created_at', ''),
+                'user_email': invoice.get('user_email', ''),
+                'file_path': invoice.get('file_path', ''),
+                'gdrive_file_id': invoice.get('gdrive_file_id', '')
+            }
+            
+            processed_rows.append(row)
+        
+        # DataFrameに変換
+        df = pd.DataFrame(processed_rows)
+        
+        # 日時フォーマット調整
+        if 'created_at' in df.columns:
+            df['created_at'] = pd.to_datetime(df['created_at']).dt.strftime('%Y-%m-%d %H:%M')
+        
+        # 数値型の変換
+        numeric_columns = ['total_amount', 'tax_amount']
+        for col in numeric_columns:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        
+        return df
+        
+    except Exception as e:
+        logger.error(f"データ前処理エラー: {e}")
+        return pd.DataFrame()
+
+
+def handle_grid_interactions(grid_response, original_data):
+    """ag-gridの選択・編集処理"""
+    try:
+        # 選択行の処理
+        selected_rows = grid_response.get('selected_rows', [])
+        
+        if selected_rows:
+            st.markdown(f"### 📌 選択済み: {len(selected_rows)} 件")
+            
+            # 一括操作ボタン
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                if st.button("📄 PDFを確認", use_container_width=True):
+                    handle_pdf_preview(selected_rows)
+            
+            with col2:
+                if st.button("💾 変更を保存", use_container_width=True):
+                    handle_data_save(grid_response)
+            
+            with col3:
+                if st.button("🗑️ 選択削除", use_container_width=True):
+                    handle_data_delete(selected_rows)
+            
+            with col4:
+                if st.button("📊 詳細分析", use_container_width=True):
+                    handle_detailed_analysis(selected_rows)
+        
+        # データ変更の検出と保存
+        updated_data = grid_response.get('data', pd.DataFrame())
+        if not updated_data.empty:
+            # 変更検出と自動保存機能を追加可能
+            pass
+            
+    except Exception as e:
+        logger.error(f"グリッド操作エラー: {e}")
+        st.error(f"操作中にエラーが発生しました: {e}")
+
+
+def handle_pdf_preview(selected_rows):
+    """PDF確認機能"""
+    st.info("📄 PDF確認機能は次の開発フェーズで実装予定です。")
+
+
+def handle_data_save(grid_response):
+    """データ保存機能"""
+    st.success("💾 データ保存機能は次の開発フェーズで実装予定です。")
+
+
+def handle_data_delete(selected_rows):
+    """データ削除機能"""
+    st.warning("🗑️ データ削除機能は次の開発フェーズで実装予定です。")
+
+
+def handle_detailed_analysis(selected_rows):
+    """詳細分析機能"""
+    st.info("📊 詳細分析機能は次の開発フェーズで実装予定です。")
 
 
 def render_settings_page():
@@ -745,7 +933,7 @@ def render_google_drive_test_page():
                             'Google DriveのURL': file_info.get('webViewLink', 'N/A')
                         })
                     
-                    if df_data:
+                    if df_data and len(df_data) > 0:
                         df = pd.DataFrame(df_data)
                         st.dataframe(df, use_container_width=True, hide_index=True)
                     
@@ -1435,6 +1623,9 @@ def render_main_content(selected_menu, user_info):
     elif selected_menu == "🔄 統合ワークフローテスト":
         render_integrated_workflow_test_page()
     
+    elif selected_menu == "🔍 OCR精度テスト (Gemini 2.0-flash)":
+        render_ocr_test_page()
+    
     else:
         # デフォルト画面
         st.markdown("## 🏠 ホーム")
@@ -1454,6 +1645,202 @@ def render_main_content(selected_menu, user_info):
         3. AI による自動処理を開始
         4. 「📊 処理状況ダッシュボード」で結果を確認
         """)
+
+
+def execute_multiple_invoice_processing(uploaded_files, user_id):
+    """複数ファイルの統合ワークフロー実行"""
+    
+    # 進捗コールバック関数（複数ファイル対応版）
+    def progress_callback(progress: WorkflowProgress, file_index: int, total_files: int):
+        # ファイル全体の進捗を計算（各ファイルで100%を均等分割）
+        file_progress = (file_index * 100 + progress.progress_percent) / total_files
+        
+        st.session_state.upload_progress.append({
+            'file_index': file_index,
+            'filename': uploaded_files[file_index].name if file_index < len(uploaded_files) else '',
+            'status': progress.status.value,
+            'step': progress.step,
+            'progress_percent': progress.progress_percent,
+            'overall_progress': file_progress,
+            'message': progress.message,
+            'timestamp': progress.timestamp.strftime("%H:%M:%S"),
+            'details': progress.details
+        })
+        # リアルタイム更新
+        st.rerun()
+    
+    try:
+        # サービスの初期化
+        ai_service = get_gemini_api()
+        storage_service = get_google_drive()
+        database_service = get_database()
+        
+        total_files = len(uploaded_files)
+        
+        # 各ファイルを順次処理
+        for file_index, uploaded_file in enumerate(uploaded_files):
+            try:
+                # ファイル固有の進捗コールバック（変数キャプチャ対応）
+                file_progress_callback = lambda progress, idx=file_index: progress_callback(progress, idx, total_files)
+                
+                # ワークフローインスタンス作成
+                workflow = InvoiceProcessingWorkflow(
+                    ai_service=ai_service,
+                    storage_service=storage_service,
+                    database_service=database_service,
+                    progress_callback=file_progress_callback
+                )
+                
+                # PDFデータ取得
+                pdf_data = uploaded_file.read()
+                filename = uploaded_file.name
+                
+                # ワークフロー実行
+                result = workflow.process_invoice(pdf_data, filename, user_id)
+                
+                # 結果を保存
+                st.session_state.upload_results.append({
+                    'filename': filename,
+                    'success': result.success,
+                    'invoice_id': result.invoice_id,
+                    'extracted_data': result.extracted_data,
+                    'file_info': result.file_info,
+                    'error_message': result.error_message,
+                    'processing_time': result.processing_time
+                })
+                
+                logger.info(f"ファイル処理完了: {filename} (成功: {result.success})")
+                
+            except Exception as e:
+                # 個別ファイルエラー
+                st.session_state.upload_results.append({
+                    'filename': uploaded_file.name,
+                    'success': False,
+                    'error_message': f"ファイル処理エラー: {str(e)}"
+                })
+                logger.error(f"ファイル処理エラー ({uploaded_file.name}): {e}")
+        
+    except Exception as e:
+        # 全体エラー
+        logger.error(f"複数ファイル処理でエラー: {e}")
+        st.error(f"処理中にエラーが発生しました: {e}")
+    
+    finally:
+        st.session_state.is_processing_upload = False
+
+
+def render_upload_progress():
+    """アップロード進捗の表示"""
+    if st.session_state.upload_progress:
+        # 最新の進捗情報を取得
+        latest_progress = st.session_state.upload_progress[-1]
+        
+        # 全体進捗バー
+        overall_progress = latest_progress.get('overall_progress', 0)
+        st.progress(overall_progress / 100)
+        
+        # 現在のファイル処理状況
+        current_file = latest_progress.get('filename', '')
+        current_step = latest_progress.get('step', '')
+        current_message = latest_progress.get('message', '')
+        
+        st.write(f"📄 **現在処理中:** {current_file}")
+        st.write(f"🔄 **ステップ:** {current_step}")
+        st.write(f"💬 **状況:** {current_message}")
+        
+        # 詳細ログ表示（最新10件）
+        with st.expander("📋 詳細ログ", expanded=False):
+            recent_logs = st.session_state.upload_progress[-10:]
+            for log in reversed(recent_logs):
+                timestamp = log.get('timestamp', '')
+                filename = log.get('filename', '')
+                step = log.get('step', '')
+                message = log.get('message', '')
+                st.text(f"[{timestamp}] {filename}: {step} - {message}")
+
+
+def render_ocr_test_page():
+    """OCRテストページ"""
+    try:
+        from utils.ocr_test_helper import create_ocr_test_app
+        
+        # OCRテストアプリを作成（デバッグパネルは全ページ共通で表示済み）
+        create_ocr_test_app()
+    except ImportError as e:
+        st.error(f"OCRテストモジュールの読み込みに失敗しました: {e}")
+        st.info("必要なモジュールが不足している可能性があります。")
+
+
+def render_upload_results():
+    """アップロード結果の表示"""
+    if not st.session_state.upload_results:
+        return
+    
+    results = st.session_state.upload_results
+    total_files = len(results)
+    successful_files = len([r for r in results if r.get('success', False)])
+    failed_files = total_files - successful_files
+    
+    # 結果サマリー
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("📊 総ファイル数", total_files)
+    
+    with col2:
+        st.metric("✅ 成功", successful_files)
+    
+    with col3:
+        st.metric("❌ 失敗", failed_files)
+    
+    # 詳細結果
+    for i, result in enumerate(results, 1):
+        filename = result.get('filename', f'ファイル{i}')
+        success = result.get('success', False)
+        
+        if success:
+            with st.expander(f"✅ {filename} - 処理成功", expanded=False):
+                invoice_id = result.get('invoice_id', 'N/A')
+                processing_time = result.get('processing_time', 0)
+                
+                st.write(f"**請求書ID:** {invoice_id}")
+                st.write(f"**処理時間:** {processing_time:.2f}秒")
+                
+                # 抽出データ表示
+                extracted_data = result.get('extracted_data', {})
+                if extracted_data:
+                    st.write("**主要情報:**")
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.write(f"• 供給者名: {extracted_data.get('supplier_name', 'N/A')}")
+                        st.write(f"• 請求書番号: {extracted_data.get('invoice_number', 'N/A')}")
+                        st.write(f"• 通貨: {extracted_data.get('currency', 'JPY')}")
+                    
+                    with col2:
+                        st.write(f"• 合計金額: ¥{extracted_data.get('total_amount', 0):,}")
+                        st.write(f"• 税額: ¥{extracted_data.get('tax_amount', 0):,}")
+                        st.write(f"• 請求日: {extracted_data.get('invoice_date', 'N/A')}")
+        else:
+            with st.expander(f"❌ {filename} - 処理失敗", expanded=False):
+                error_message = result.get('error_message', '詳細不明')
+                st.error(f"エラー内容: {error_message}")
+    
+    # 操作ボタン
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("🔄 新しいファイルを処理", use_container_width=True):
+            # セッション状態をリセット
+            st.session_state.upload_progress = []
+            st.session_state.upload_results = []
+            st.session_state.is_processing_upload = False
+            st.rerun()
+    
+    with col2:
+        if st.button("📊 ダッシュボードで確認", use_container_width=True):
+            st.session_state.selected_menu = "📊 処理状況ダッシュボード"
+            st.rerun()
 
 
 def main():

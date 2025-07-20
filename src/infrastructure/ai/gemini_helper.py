@@ -12,7 +12,15 @@ import logging
 from typing import Dict, Any, Optional, List
 import json
 import io
+import time
 from pathlib import Path
+
+# 設定ヘルパーをインポート
+from utils.config_helper import (
+    get_gemini_model, get_gemini_max_retries, get_gemini_retry_delay,
+    get_gemini_temperature, get_gemini_max_tokens, get_gemini_timeout,
+    is_ai_debug
+)
 
 # ロガー設定
 logger = logging.getLogger(__name__)
@@ -27,11 +35,22 @@ class GeminiAPIManager:
             self.api_key = st.secrets["ai"]["gemini_api_key"]
             genai.configure(api_key=self.api_key)
             
-            # モデル設定
-            self.model_name = "gemini-1.5-flash"
+            # モデル設定（settings.iniから取得）
+            self.model_name = get_gemini_model()
+            self.temperature = get_gemini_temperature()
+            self.max_tokens = get_gemini_max_tokens()
+            self.timeout = get_gemini_timeout()
+            self.max_retries = get_gemini_max_retries()
+            self.retry_delay = get_gemini_retry_delay()
+            
+            # モデル初期化
             self.model = genai.GenerativeModel(self.model_name)
             
-            logger.info("Gemini API接続初期化完了")
+            logger.info(f"Gemini API接続初期化完了: モデル={self.model_name}, 温度={self.temperature}")
+            
+            if is_ai_debug():
+                logger.info(f"AI設定詳細: max_tokens={self.max_tokens}, timeout={self.timeout}s, retries={self.max_retries}")
+                
         except KeyError as e:
             logger.error(f"Gemini API設定が不完全です: {e}")
             st.error(f"Gemini API設定エラー: {e}")
@@ -69,48 +88,69 @@ class GeminiAPIManager:
             logger.error(f"テキスト生成でエラー: {e}")
             return None
     
-    def analyze_pdf_content(self, pdf_content: bytes, prompt: str) -> Optional[Dict[str, Any]]:
-        """PDFコンテンツを分析"""
-        try:
-            # PDFをBase64エンコード
-            pdf_base64 = base64.b64encode(pdf_content).decode('utf-8')
+    def analyze_pdf_content(self, pdf_content: bytes, prompt: str, max_retries: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """PDFコンテンツを分析（リトライ機能付き）"""
+        # settings.iniから設定値を取得
+        if max_retries is None:
+            max_retries = self.max_retries
             
-            # マルチモーダルコンテンツを作成
-            contents = [
-                prompt,
-                {
-                    "mime_type": "application/pdf",
-                    "data": pdf_base64
+        for attempt in range(max_retries):
+            try:
+                # PDFをBase64エンコード
+                pdf_base64 = base64.b64encode(pdf_content).decode('utf-8')
+                
+                # マルチモーダルコンテンツを作成
+                contents = [
+                    prompt,
+                    {
+                        "mime_type": "application/pdf",
+                        "data": pdf_base64
+                    }
+                ]
+                
+                # 生成設定（settings.iniから取得）
+                generation_config = {
+                    "response_mime_type": "application/json",
+                    "temperature": self.temperature,
+                    "max_output_tokens": self.max_tokens
                 }
-            ]
-            
-            # 生成設定
-            generation_config = {
-                "response_mime_type": "application/json"
-            }
-            
-            # Gemini APIで分析
-            response = self.model.generate_content(
-                contents,
-                generation_config=generation_config
-            )
-            
-            if response and response.text:
-                # JSON形式でレスポンスをパース
-                try:
-                    result = json.loads(response.text)
-                    logger.info("PDF分析成功")
-                    return result
-                except json.JSONDecodeError as e:
-                    logger.error(f"JSON解析エラー: {e}")
-                    # JSONでない場合はテキストとして返す
-                    return {"raw_text": response.text}
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"PDF分析でエラー: {e}")
-            return None
+                
+                # Gemini APIで分析
+                response = self.model.generate_content(
+                    contents,
+                    generation_config=generation_config
+                )
+                
+                if response and response.text:
+                    # JSON形式でレスポンスをパース
+                    try:
+                        result = json.loads(response.text)
+                        logger.info("PDF分析成功")
+                        return result
+                    except json.JSONDecodeError as e:
+                        logger.error(f"JSON解析エラー: {e}")
+                        # JSONでない場合はテキストとして返す
+                        return {"raw_text": response.text}
+                
+                return None
+                
+            except Exception as e:
+                error_str = str(e)
+                if "429" in error_str or "quota" in error_str.lower():
+                    # レート制限エラーの場合（settings.iniから遅延時間を取得）
+                    retry_delay = self.retry_delay if attempt == 0 else self.retry_delay * (attempt + 1)
+                    logger.warning(f"Gemini API制限に達しました。{retry_delay}秒後にリトライします (試行 {attempt + 1}/{max_retries})")
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        continue
+                    else:
+                        logger.error(f"最大リトライ回数に達しました: {e}")
+                        return None
+                else:
+                    logger.error(f"PDF分析でエラー: {e}")
+                    return None
+        
+        return None
     
     def extract_invoice_data(self, pdf_content: bytes) -> Optional[Dict[str, Any]]:
         """請求書データ抽出（専用プロンプト使用）"""

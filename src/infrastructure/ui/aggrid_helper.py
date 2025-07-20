@@ -130,8 +130,8 @@ class AgGridManager:
         # ページネーション設定
         gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=20)
         
-        # サイドバー設定
-        gb.configure_side_bar()
+        # サイドバー設定は削除（エンタープライズ機能のため）
+        # gb.configure_side_bar()
         
         grid_options = gb.build()
         
@@ -293,6 +293,51 @@ class AgGridManager:
             height=500,
             theme='streamlit',
             allow_unsafe_jscode=True
+        )
+    
+    def create_data_grid(self, data: pd.DataFrame, 
+                        editable: bool = False,
+                        fit_columns_on_grid_load: bool = True,
+                        selection_mode: str = 'multiple',
+                        use_checkbox: bool = True,
+                        height: int = 400) -> AgGrid:
+        """汎用データグリッドを作成（OCRテスト履歴表示用）"""
+        
+        gb = GridOptionsBuilder.from_dataframe(data)
+        
+        # 基本設定の適用
+        gb.configure_default_column(
+            resizable=True,
+            sortable=True,
+            filterable=True,
+            flex=1,
+            minWidth=100,
+            editable=editable
+        )
+        
+        # 選択モードの設定
+        if selection_mode == 'multiple':
+            gb.configure_selection('multiple', use_checkbox=use_checkbox)
+        elif selection_mode == 'single':
+            gb.configure_selection('single', use_checkbox=use_checkbox)
+        
+        # ページネーション設定
+        gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=20)
+        
+        # サイドバー設定
+        gb.configure_side_bar()
+        
+        grid_options = gb.build()
+        
+        return AgGrid(
+            data,
+            gridOptions=grid_options,
+            data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+            update_mode=GridUpdateMode.MODEL_CHANGED,
+            fit_columns_on_grid_load=fit_columns_on_grid_load,
+            enable_enterprise_modules=False,
+            height=height,
+            theme='streamlit'
         )
     
     def export_to_dataframe(self, grid_response) -> pd.DataFrame:
