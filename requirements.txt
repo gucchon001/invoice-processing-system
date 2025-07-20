@@ -8,6 +8,9 @@ streamlit>=1.45.0
 streamlit-oauth>=0.1.14
 requests>=2.31.0
 
+# UI Components
+streamlit-aggrid>=0.3.4
+
 # データベース
 supabase>=1.4.0
 
