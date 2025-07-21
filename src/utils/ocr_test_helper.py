@@ -352,9 +352,13 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
             validation["error_categories"]["data_format"].append(warning_msg)
     
     def _validate_amounts(self, result: Dict[str, Any], validation: Dict[str, Any]):
-        """金額検証"""
+        """金額検証（外貨取引対応）"""
         tax_included = result.get("total_amount_tax_included")
         tax_excluded = result.get("total_amount_tax_excluded")
+        currency = result.get("currency", "JPY")
+        
+        # 外貨取引判定
+        is_foreign_currency = currency and currency.upper() != "JPY"
         
         # 数値変換試行
         try:
@@ -377,21 +381,53 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
             validation["warnings"].append(warning_msg)
             validation["error_categories"]["business_logic"].append(warning_msg)
         
-        # 税込・税抜金額の整合性チェック
+        # 税込・税抜金額の整合性チェック（外貨取引対応）
         if (tax_included is not None and tax_excluded is not None and 
             tax_included > 0 and tax_excluded > 0):
             
-            if tax_included <= tax_excluded:
-                warning_msg = f"税込金額({tax_included:,.0f})が税抜金額({tax_excluded:,.0f})以下です"
-                validation["warnings"].append(warning_msg)
-                validation["error_categories"]["business_logic"].append(warning_msg)
+            if is_foreign_currency:
+                # 外貨取引では税込=税抜が正常（海外事業者は非課税）
+                if tax_included == tax_excluded:
+                    # 正常なパターンなので警告は出さない
+                    pass
+                elif tax_included < tax_excluded:
+                    # 税込 < 税抜は明らかに異常
+                    warning_msg = f"外貨取引で税込金額({tax_included:,.0f})が税抜金額({tax_excluded:,.0f})を下回っています"
+                    validation["warnings"].append(warning_msg)
+                    validation["error_categories"]["business_logic"].append(warning_msg)
+                # 税込 > 税抜の場合は税率計算へ進む
+            else:
+                # 国内取引（JPY）の場合は従来通りの判定
+                if tax_included <= tax_excluded:
+                    warning_msg = f"税込金額({tax_included:,.0f})が税抜金額({tax_excluded:,.0f})以下です"
+                    validation["warnings"].append(warning_msg)
+                    validation["error_categories"]["business_logic"].append(warning_msg)
             
-            # 税率計算
-            tax_rate = ((tax_included - tax_excluded) / tax_excluded) * 100
-            if tax_rate < 5 or tax_rate > 15:  # 消費税率の妥当性チェック
-                warning_msg = f"計算された税率が異常です: {tax_rate:.1f}%"
-                validation["warnings"].append(warning_msg)
-                validation["error_categories"]["business_logic"].append(warning_msg)
+            # 税率計算（外貨取引対応）
+            if tax_excluded > 0:
+                tax_rate = ((tax_included - tax_excluded) / tax_excluded) * 100
+                
+                if is_foreign_currency:
+                    # 外貨取引では税率0%（税込=税抜）が正常
+                    if abs(tax_rate) < 0.1:  # 0%前後（計算誤差考慮）
+                        # 正常なパターンなので警告は出さない
+                        pass
+                    elif tax_rate < 0:
+                        # 負の税率は明らかに異常
+                        warning_msg = f"外貨取引で計算された税率が負の値です: {tax_rate:.1f}%"
+                        validation["warnings"].append(warning_msg)
+                        validation["error_categories"]["business_logic"].append(warning_msg)
+                    elif tax_rate > 15:
+                        # 異常に高い税率
+                        warning_msg = f"外貨取引で計算された税率が異常に高いです: {tax_rate:.1f}%"
+                        validation["warnings"].append(warning_msg)
+                        validation["error_categories"]["business_logic"].append(warning_msg)
+                else:
+                    # 国内取引（JPY）の場合は従来通りの判定
+                    if tax_rate < 5 or tax_rate > 15:  # 消費税率の妥当性チェック
+                        warning_msg = f"計算された税率が異常です: {tax_rate:.1f}%"
+                        validation["warnings"].append(warning_msg)
+                        validation["error_categories"]["business_logic"].append(warning_msg)
     
     def _validate_dates(self, result: Dict[str, Any], validation: Dict[str, Any]):
         """日付検証"""
@@ -420,12 +456,13 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
                 validation["warnings"].append(warning_msg)
                 validation["error_categories"]["data_format"].append(warning_msg)
         
-        # 日付の論理チェック
+        # 日付の論理チェック（境界値対応）
         if parsed_issue_date and parsed_due_date:
-            if parsed_due_date <= parsed_issue_date:
-                warning_msg = "支払期日が発行日以前になっています"
+            if parsed_due_date < parsed_issue_date:
+                warning_msg = "支払期日が発行日より前になっています"
                 validation["warnings"].append(warning_msg)
                 validation["error_categories"]["business_logic"].append(warning_msg)
+            # 同一日の場合は正常（即日支払いもビジネス上有効）
         
         # 異常に古い/新しい日付チェック
         current_date = datetime.now()
