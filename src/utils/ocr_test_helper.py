@@ -1042,8 +1042,16 @@ def display_results_with_aggrid(test_results: Dict[str, Any]) -> None:
         if len(results_data) > 0:
             df = pd.DataFrame(results_data)
             
-            # ag-gridで表示
-            st.subheader("📊 OCRテスト結果 (ag-grid)")
+            # 選択状態リセットボタン
+            col_grid, col_reset = st.columns([4, 1])
+            with col_grid:
+                st.subheader("📊 OCRテスト結果 (ag-grid)")
+            with col_reset:
+                if st.button("🔄 選択リセット", key="reset_current_test_selection"):
+                    current_test_key = "selected_current_test_file"
+                    if current_test_key in st.session_state:
+                        del st.session_state[current_test_key]
+                    st.rerun()
             
             grid_response = aggrid_manager.create_data_grid(
                 df,
@@ -1063,10 +1071,22 @@ def display_results_with_aggrid(test_results: Dict[str, Any]) -> None:
             elif not isinstance(selected_rows, list):
                 selected_rows = []
             
+            # セッション状態で選択情報を管理（新しいOCRテスト用）
+            current_test_key = "selected_current_test_file"
+            
+            # 新しい選択があればセッション状態を更新
             if len(selected_rows) > 0:
                 selected_row = selected_rows[0]
                 filename = selected_row["ファイル名"]
-                
+                st.session_state[current_test_key] = filename
+            # 選択がなければセッション状態から復元
+            elif current_test_key in st.session_state:
+                filename = st.session_state[current_test_key]
+            else:
+                filename = None
+            
+            # ファイルが選択されている場合の詳細表示
+            if filename:
                 st.markdown(f"### 📄 選択されたファイル: {filename}")
                 
                 # 該当する詳細結果を取得
@@ -1077,6 +1097,9 @@ def display_results_with_aggrid(test_results: Dict[str, Any]) -> None:
                     )
                 except StopIteration:
                     st.error(f"❌ ファイル '{filename}' の詳細結果が見つかりません")
+                    # セッション状態をクリア
+                    if current_test_key in st.session_state:
+                        del st.session_state[current_test_key]
                     selected_result = None
                 
                 # 詳細情報を表示
@@ -1243,7 +1266,17 @@ def display_session_history(ocr_test_manager: 'OCRTestManager', user_email: str)
                     if len(history_data) > 0:
                         df_history = pd.DataFrame(history_data)
                         
-                        st.subheader("履歴詳細 (ag-grid)")
+                        # 選択状態リセットボタン
+                        col_grid, col_reset = st.columns([4, 1])
+                        with col_grid:
+                            st.subheader("履歴詳細 (ag-grid)")
+                        with col_reset:
+                            if st.button("🔄 選択リセット", key=f"reset_selection_{session_id}"):
+                                session_key = f"selected_history_file_{session_id}"
+                                if session_key in st.session_state:
+                                    del st.session_state[session_key]
+                                st.rerun()
+                        
                         grid_response = aggrid_manager.create_data_grid(
                             df_history,
                             editable=False,
@@ -1261,10 +1294,22 @@ def display_session_history(ocr_test_manager: 'OCRTestManager', user_email: str)
                         elif not isinstance(selected_rows, list):
                             selected_rows = []
                         
+                        # セッション状態で選択情報を管理
+                        session_key = f"selected_history_file_{session_id}"
+                        
+                        # 新しい選択があればセッション状態を更新
                         if len(selected_rows) > 0:
                             selected_row = selected_rows[0]
                             filename = selected_row["ファイル名"]
-                            
+                            st.session_state[session_key] = filename
+                        # 選択がなければセッション状態から復元
+                        elif session_key in st.session_state:
+                            filename = st.session_state[session_key]
+                        else:
+                            filename = None
+                        
+                        # ファイルが選択されている場合の詳細表示
+                        if filename:
                             st.markdown(f"### 📄 選択されたファイル: {filename}")
                             
                             # 該当する詳細結果を取得
@@ -1275,6 +1320,9 @@ def display_session_history(ocr_test_manager: 'OCRTestManager', user_email: str)
                                 )
                             except StopIteration:
                                 st.error(f"❌ ファイル '{filename}' の詳細結果が見つかりません")
+                                # セッション状態をクリア
+                                if session_key in st.session_state:
+                                    del st.session_state[session_key]
                                 selected_result = None
                             
                             # 詳細情報を表示

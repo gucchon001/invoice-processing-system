@@ -333,11 +333,12 @@ class AgGridManager:
             data,
             gridOptions=grid_options,
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-            update_mode=GridUpdateMode.MODEL_CHANGED,
+            update_mode=GridUpdateMode.SELECTION_CHANGED,
             fit_columns_on_grid_load=fit_columns_on_grid_load,
             enable_enterprise_modules=False,
             height=height,
-            theme='streamlit'
+            theme='streamlit',
+            reload_data=False
         )
     
     def export_to_dataframe(self, grid_response) -> pd.DataFrame:
