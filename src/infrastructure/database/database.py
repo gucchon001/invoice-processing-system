@@ -77,8 +77,18 @@ class DatabaseManager:
         """ユーザー情報を取得"""
         try:
             result = self.supabase.table('users').select('*').eq('email', email).execute()
-            if result.data:
-                return result.data[0]
+            
+            # レスポンスデータの安全な処理
+            data = result.data if result.data else []
+            
+            # DataFrameの場合はリストに変換
+            if hasattr(data, 'to_dict'):
+                data = data.to_dict('records')
+            elif not isinstance(data, list):
+                data = []
+            
+            if len(data) > 0:
+                return data[0]
             return None
         except Exception as e:
             logger.error(f"ユーザー取得でエラー: {e}")
@@ -107,7 +117,17 @@ class DatabaseManager:
             if user_email:
                 query = query.eq('user_email', user_email)
             result = query.order('uploaded_at', desc=True).execute()
-            return result.data
+            
+            # レスポンスデータの安全な処理
+            data = result.data if result.data else []
+            
+            # DataFrameの場合はリストに変換
+            if hasattr(data, 'to_dict'):
+                data = data.to_dict('records')
+            elif not isinstance(data, list):
+                data = []
+            
+            return data
         except Exception as e:
             logger.error(f"請求書取得でエラー: {e}")
             return []
@@ -143,7 +163,14 @@ class DatabaseManager:
                 'status': invoice_data.get('status', 'extracted')
             }).execute()
             
-            if result.data and len(result.data) > 0:
+            # DataFrameの場合はリストに変換してから判定
+            data = result.data if result.data else []
+            if hasattr(data, 'to_dict'):
+                data = data.to_dict('records')
+            elif not isinstance(data, list):
+                data = []
+            
+            if len(data) > 0:
                 logger.info(f"統合ワークフロー請求書挿入成功: {result.data[0]['id']}")
                 return result.data[0]
             else:
@@ -171,7 +198,17 @@ class DatabaseManager:
             if approval_status:
                 query = query.eq('approval_status', approval_status)
             result = query.order('id').execute()
-            return result.data
+            
+            # レスポンスデータの安全な処理
+            data = result.data if result.data else []
+            
+            # DataFrameの場合はリストに変換
+            if hasattr(data, 'to_dict'):
+                data = data.to_dict('records')
+            elif not isinstance(data, list):
+                data = []
+            
+            return data
         except Exception as e:
             logger.error(f"支払マスタ取得でエラー: {e}")
             return []
@@ -191,8 +228,18 @@ class DatabaseManager:
         """ユーザー設定を取得"""
         try:
             result = self.supabase.table('user_preferences').select('*').eq('user_email', user_email).execute()
-            if result.data:
-                return result.data[0]
+            
+            # レスポンスデータの安全な処理
+            data = result.data if result.data else []
+            
+            # DataFrameの場合はリストに変換
+            if hasattr(data, 'to_dict'):
+                data = data.to_dict('records')
+            elif not isinstance(data, list):
+                data = []
+            
+            if len(data) > 0:
+                return data[0]
             return None
         except Exception as e:
             logger.error(f"ユーザー設定取得でエラー: {e}")

@@ -431,7 +431,7 @@ if __name__ == "__main__":
 "@
     }
     
-    $content = $appMainByType[$ProjectType] ?? $appMainByType["basic"]
+    $content = if ($appMainByType.ContainsKey($ProjectType)) { $appMainByType[$ProjectType] } else { $appMainByType["basic"] }
     Set-Content -Path (Join-Path $BasePath "src/app/main.py") -Value $content -Encoding UTF8
 }
 
@@ -498,7 +498,7 @@ CMD ["python", "main.py"]
 "@
     }
     
-    $dockerfile = $dockerfileByType[$ProjectType] ?? $dockerfileByType["streamlit"]
+    $dockerfile = if ($dockerfileByType.ContainsKey($ProjectType)) { $dockerfileByType[$ProjectType] } else { $dockerfileByType["streamlit"] }
     Set-Content -Path (Join-Path $BasePath "Dockerfile") -Value $dockerfile -Encoding UTF8
     
     # docker-compose.yml

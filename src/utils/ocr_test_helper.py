@@ -10,7 +10,7 @@ import pandas as pd
 import json
 import logging
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import io
 import uuid
 
@@ -19,6 +19,32 @@ from utils.config_helper import get_gemini_model
 
 # ロガー設定
 logger = logging.getLogger(__name__)
+
+# 日時をUTCからJSTに変換する関数を追加
+def convert_utc_to_jst(utc_time_str: str) -> str:
+    """UTC時刻文字列をJST（日本標準時）に変換"""
+    try:
+        if not utc_time_str:
+            return ""
+        
+        # UTC時刻をパース（タイムゾーン情報を考慮）
+        if utc_time_str.endswith('Z'):
+            utc_time = datetime.fromisoformat(utc_time_str[:-1] + '+00:00')
+        elif '+' in utc_time_str or utc_time_str.endswith('T'):
+            utc_time = datetime.fromisoformat(utc_time_str)
+        else:
+            # タイムゾーン情報がない場合はUTCとして扱う
+            utc_time = datetime.fromisoformat(utc_time_str).replace(tzinfo=timezone.utc)
+        
+        # JSTに変換（UTC+9）
+        jst = utc_time.astimezone(timezone(timedelta(hours=9)))
+        
+        # 表示用フォーマット（YYYY-MM-DD HH:MM）
+        return jst.strftime('%Y-%m-%d %H:%M')
+        
+    except Exception as e:
+        logger.warning(f"日時変換エラー: {e}, 元の値: {utc_time_str}")
+        return str(utc_time_str)[:16]  # エラーの場合は元の処理
 
 class OCRTestManager:
     """OCRテスト管理クラス"""
@@ -181,60 +207,270 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
             return None
     
     def validate_ocr_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        """OCR結果の検証"""
+        """OCR結果の詳細検証（改良版）"""
         validation = {
             "is_valid": True,
             "errors": [],
             "warnings": [],
-            "completeness_score": 0
+            "completeness_score": 0,
+            "error_categories": {
+                "critical": [],      # システム停止レベル
+                "data_missing": [],  # 必須データ欠損
+                "data_format": [],   # データ形式エラー
+                "business_logic": [] # ビジネスロジック警告
+            }
         }
         
-        required_fields = [
-            "issuer_name", "total_amount_tax_included", "currency"
-        ]
+        # 1. 必須フィールドの詳細チェック
+        required_fields = {
+            "issuer_name": "請求元企業名",
+            "total_amount_tax_included": "税込金額", 
+            "currency": "通貨"
+        }
         
-        optional_fields = [
-            "recipient_name", "invoice_number", "registration_number", 
-            "total_amount_tax_excluded", "issue_date", "due_date", "line_items"
-        ]
+        important_fields = {
+            "recipient_name": "請求先企業名",
+            "invoice_number": "請求書番号",
+            "issue_date": "発行日"
+        }
+        
+        optional_fields = {
+            "registration_number": "登録番号",
+            "total_amount_tax_excluded": "税抜金額",
+            "due_date": "支払期日",
+            "line_items": "明細情報",
+            "key_info": "キー情報"
+        }
         
         # 必須フィールドチェック
-        for field in required_fields:
-            if not result.get(field):
-                validation["errors"].append(f"必須フィールド '{field}' が欠損")
+        for field, display_name in required_fields.items():
+            value = result.get(field)
+            if not self._is_valid_field_value(value):
+                error_msg = f"{display_name}が取得できませんでした"
+                validation["errors"].append(error_msg)
+                validation["error_categories"]["data_missing"].append(error_msg)
                 validation["is_valid"] = False
         
-        # オプションフィールドチェック
-        for field in optional_fields:
-            if not result.get(field):
-                validation["warnings"].append(f"オプションフィールド '{field}' が欠損")
+        # 重要フィールドチェック（警告レベル）
+        for field, display_name in important_fields.items():
+            value = result.get(field)
+            if not self._is_valid_field_value(value):
+                warning_msg = f"{display_name}が取得できませんでした"
+                validation["warnings"].append(warning_msg)
+                validation["error_categories"]["business_logic"].append(warning_msg)
         
-        # 完全性スコア計算
-        total_fields = len(required_fields) + len(optional_fields)
-        filled_fields = sum(1 for field in required_fields + optional_fields if result.get(field))
-        validation["completeness_score"] = round((filled_fields / total_fields) * 100, 1)
+        # 2. データ型・フォーマット検証
+        self._validate_data_formats(result, validation)
         
-        # 金額の妥当性チェック
+        # 3. 金額整合性チェック
+        self._validate_amounts(result, validation)
+        
+        # 4. 日付検証
+        self._validate_dates(result, validation)
+        
+        # 5. 外貨取引チェック
+        self._validate_foreign_currency(result, validation)
+        
+        # 6. 明細整合性チェック
+        self._validate_line_items(result, validation)
+        
+        # 7. 完全性スコア計算
+        all_fields = {**required_fields, **important_fields, **optional_fields}
+        filled_fields = sum(1 for field in all_fields.keys() if self._is_valid_field_value(result.get(field)))
+        validation["completeness_score"] = round((filled_fields / len(all_fields)) * 100, 1)
+        
+        # 8. エラー重要度に基づく最終判定
+        if validation["error_categories"]["critical"] or validation["error_categories"]["data_missing"]:
+            validation["is_valid"] = False
+        
+        return validation
+    
+    def _is_valid_field_value(self, value) -> bool:
+        """フィールド値の有効性をチェック"""
+        if value is None:
+            return False
+        if isinstance(value, str) and value.strip() == "":
+            return False
+        if isinstance(value, (list, dict)) and len(value) == 0:
+            return False
+        return True
+    
+    def _validate_data_formats(self, result: Dict[str, Any], validation: Dict[str, Any]):
+        """データ型・フォーマット検証"""
+        
+        # 通貨コード検証
+        currency = result.get("currency")
+        if currency:
+            valid_currencies = ["JPY", "USD", "EUR", "GBP", "AUD", "CAD", "CHF"]
+            if currency not in valid_currencies:
+                error_msg = f"未対応の通貨コードです: {currency}"
+                validation["warnings"].append(error_msg)
+                validation["error_categories"]["data_format"].append(error_msg)
+        
+        # 金額データ型チェック
+        for amount_field in ["total_amount_tax_included", "total_amount_tax_excluded"]:
+            amount = result.get(amount_field)
+            if amount is not None and not isinstance(amount, (int, float)):
+                try:
+                    float(amount)
+                except (ValueError, TypeError):
+                    error_msg = f"金額フィールド '{amount_field}' のフォーマットが不正です: {amount}"
+                    validation["errors"].append(error_msg)
+                    validation["error_categories"]["data_format"].append(error_msg)
+                    validation["is_valid"] = False
+        
+        # 企業名の長さチェック
+        issuer_name = result.get("issuer_name")
+        if issuer_name and len(str(issuer_name)) > 100:
+            warning_msg = f"請求元企業名が長すぎます（{len(str(issuer_name))}文字）"
+            validation["warnings"].append(warning_msg)
+            validation["error_categories"]["data_format"].append(warning_msg)
+    
+    def _validate_amounts(self, result: Dict[str, Any], validation: Dict[str, Any]):
+        """金額検証"""
         tax_included = result.get("total_amount_tax_included")
         tax_excluded = result.get("total_amount_tax_excluded")
         
-        if (tax_included is not None and isinstance(tax_included, (int, float)) and 
-            tax_excluded is not None and isinstance(tax_excluded, (int, float))):
-            if tax_included <= tax_excluded:
-                validation["warnings"].append("税込金額が税抜金額以下です")
+        # 数値変換試行
+        try:
+            if tax_included is not None:
+                tax_included = float(tax_included)
+            if tax_excluded is not None:
+                tax_excluded = float(tax_excluded)
+        except (ValueError, TypeError):
+            return  # フォーマットエラーは別の検証で処理済み
         
-        # 明細の整合性チェック
-        line_items = result.get("line_items", [])
-        if line_items:
-            line_total = sum(item.get("amount", 0) for item in line_items if isinstance(item.get("amount"), (int, float)))
-            invoice_total = result.get("total_amount_tax_excluded")
+        # 負の金額チェック
+        if tax_included is not None and tax_included < 0:
+            warning_msg = f"税込金額が負の値です: {tax_included}（返金・調整の可能性）"
+            validation["warnings"].append(warning_msg)
+            validation["error_categories"]["business_logic"].append(warning_msg)
+        
+        # 異常に大きな金額チェック
+        if tax_included is not None and tax_included > 10000000:  # 1000万円超
+            warning_msg = f"税込金額が異常に高額です: {tax_included:,.0f}円"
+            validation["warnings"].append(warning_msg)
+            validation["error_categories"]["business_logic"].append(warning_msg)
+        
+        # 税込・税抜金額の整合性チェック
+        if (tax_included is not None and tax_excluded is not None and 
+            tax_included > 0 and tax_excluded > 0):
             
-            # invoice_totalがNoneでない場合のみチェック
-            if invoice_total is not None and isinstance(invoice_total, (int, float)) and invoice_total > 0:
-                if abs(line_total - invoice_total) > invoice_total * 0.1:  # 10%以上の差異
-                    validation["warnings"].append(f"明細合計({line_total})と請求金額({invoice_total})に差異があります")
+            if tax_included <= tax_excluded:
+                warning_msg = f"税込金額({tax_included:,.0f})が税抜金額({tax_excluded:,.0f})以下です"
+                validation["warnings"].append(warning_msg)
+                validation["error_categories"]["business_logic"].append(warning_msg)
+            
+            # 税率計算
+            tax_rate = ((tax_included - tax_excluded) / tax_excluded) * 100
+            if tax_rate < 5 or tax_rate > 15:  # 消費税率の妥当性チェック
+                warning_msg = f"計算された税率が異常です: {tax_rate:.1f}%"
+                validation["warnings"].append(warning_msg)
+                validation["error_categories"]["business_logic"].append(warning_msg)
+    
+    def _validate_dates(self, result: Dict[str, Any], validation: Dict[str, Any]):
+        """日付検証"""
+        from datetime import datetime, timedelta
         
-        return validation
+        issue_date = result.get("issue_date")
+        due_date = result.get("due_date")
+        
+        # 日付フォーマットチェック
+        parsed_issue_date = None
+        parsed_due_date = None
+        
+        if issue_date:
+            try:
+                parsed_issue_date = datetime.fromisoformat(str(issue_date))
+            except ValueError:
+                warning_msg = f"発行日のフォーマットが不正です: {issue_date}"
+                validation["warnings"].append(warning_msg)
+                validation["error_categories"]["data_format"].append(warning_msg)
+        
+        if due_date:
+            try:
+                parsed_due_date = datetime.fromisoformat(str(due_date))
+            except ValueError:
+                warning_msg = f"支払期日のフォーマットが不正です: {due_date}"
+                validation["warnings"].append(warning_msg)
+                validation["error_categories"]["data_format"].append(warning_msg)
+        
+        # 日付の論理チェック
+        if parsed_issue_date and parsed_due_date:
+            if parsed_due_date <= parsed_issue_date:
+                warning_msg = "支払期日が発行日以前になっています"
+                validation["warnings"].append(warning_msg)
+                validation["error_categories"]["business_logic"].append(warning_msg)
+        
+        # 異常に古い/新しい日付チェック
+        current_date = datetime.now()
+        if parsed_issue_date:
+            if parsed_issue_date > current_date + timedelta(days=30):
+                warning_msg = "発行日が未来すぎます"
+                validation["warnings"].append(warning_msg)
+                validation["error_categories"]["business_logic"].append(warning_msg)
+            
+            if parsed_issue_date < current_date - timedelta(days=1095):  # 3年前
+                warning_msg = "発行日が3年以上前です"
+                validation["warnings"].append(warning_msg)
+                validation["error_categories"]["business_logic"].append(warning_msg)
+    
+    def _validate_foreign_currency(self, result: Dict[str, Any], validation: Dict[str, Any]):
+        """外貨取引チェック"""
+        currency = result.get("currency")
+        issuer_name = result.get("issuer_name", "")
+        
+        if currency and currency != "JPY":
+            # 外貨取引の基本警告
+            warning_msg = f"外貨取引のため為替レート確認が必要です（{currency}）"
+            validation["warnings"].append(warning_msg)
+            validation["error_categories"]["business_logic"].append(warning_msg)
+            
+            # 海外事業者チェック（簡易判定）
+            foreign_keywords = ["LLC", "Ltd", "Inc", "Corp", "GmbH", "Limited", "Ireland", "Singapore"]
+            if any(keyword in issuer_name for keyword in foreign_keywords):
+                warning_msg = "海外事業者のため消費税処理を確認してください"
+                validation["warnings"].append(warning_msg)
+                validation["error_categories"]["business_logic"].append(warning_msg)
+    
+    def _validate_line_items(self, result: Dict[str, Any], validation: Dict[str, Any]):
+        """明細整合性チェック"""
+        line_items = result.get("line_items", [])
+        
+        if line_items and isinstance(line_items, list):
+            # 明細合計の計算
+            line_total = 0
+            invalid_items = 0
+            
+            for i, item in enumerate(line_items):
+                if not isinstance(item, dict):
+                    continue
+                
+                amount = item.get("amount")
+                if amount is not None:
+                    try:
+                        line_total += float(amount)
+                    except (ValueError, TypeError):
+                        invalid_items += 1
+                        warning_msg = f"明細{i+1}の金額フォーマットが不正です: {amount}"
+                        validation["warnings"].append(warning_msg)
+                        validation["error_categories"]["data_format"].append(warning_msg)
+            
+            # 請求金額との突合
+            invoice_total = result.get("total_amount_tax_excluded")
+            if (invoice_total is not None and isinstance(invoice_total, (int, float)) and 
+                invoice_total > 0 and line_total > 0):
+                
+                difference_rate = abs(line_total - invoice_total) / invoice_total
+                if difference_rate > 0.1:  # 10%以上の差異
+                    warning_msg = f"明細合計({line_total:,.0f})と請求金額({invoice_total:,.0f})に{difference_rate*100:.1f}%の差異があります"
+                    validation["warnings"].append(warning_msg)
+                    validation["error_categories"]["business_logic"].append(warning_msg)
+        
+        elif line_items is not None and not isinstance(line_items, list):
+            warning_msg = "明細情報のフォーマットが不正です"
+            validation["warnings"].append(warning_msg)
+            validation["error_categories"]["data_format"].append(warning_msg)
     
     def format_ocr_result_for_display(self, result: Dict[str, Any], validation: Dict[str, Any]) -> pd.DataFrame:
         """OCR結果を表示用データフレームに変換"""
@@ -271,7 +507,11 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
         line_items = result.get("line_items", [])
         df_details = pd.DataFrame()
         
-        if line_items:
+        # line_itemsの安全な処理
+        if not isinstance(line_items, list):
+            line_items = []
+        
+        if len(line_items) > 0:
             details_data = []
             for i, item in enumerate(line_items, 1):
                 details_data.append({
@@ -302,7 +542,13 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
             # PDFファイル一覧取得
             pdf_files = self.get_drive_pdfs(folder_id)
             
-            if not pdf_files:
+            # DataFrameの場合はリストに変換
+            if hasattr(pdf_files, 'to_dict'):
+                pdf_files = pdf_files.to_dict('records')
+            elif not isinstance(pdf_files, list):
+                pdf_files = []
+            
+            if len(pdf_files) == 0:
                 st.warning("指定フォルダにPDFファイルが見つかりません")
                 return test_results
             
@@ -344,7 +590,11 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
                             "processed_at": datetime.now().isoformat()
                         })
                         
-                        test_results["files_success"] += 1
+                        # 検証結果に基づいて成功をカウント
+                        if validation["is_valid"]:
+                            test_results["files_success"] += 1
+                        else:
+                            test_results["files_failed"] += 1
                     else:
                         test_results["files_failed"] += 1
                 else:
@@ -360,7 +610,7 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
             test_results["end_time"] = datetime.now()
             test_results["duration"] = (test_results["end_time"] - test_results["start_time"]).total_seconds()
             
-            if test_results["results"]:
+            if len(test_results.get("results", [])) > 0:
                 # None値を除外して有効なスコアのみを取得
                 completeness_scores = [
                     r["validation"]["completeness_score"] 
@@ -536,7 +786,16 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
             
             response = service_supabase.table("ocr_test_sessions").select("*").eq("created_by", user_email).order("created_at", desc=True).execute()
             
-            return response.data if response.data else []
+            # レスポンスデータの安全な処理
+            data = response.data if response.data else []
+            
+            # DataFrameの場合はリストに変換
+            if hasattr(data, 'to_dict'):
+                data = data.to_dict('records')
+            elif not isinstance(data, list):
+                data = []
+            
+            return data
             
         except Exception as e:
             logger.error(f"セッション読み込み中にエラー: {e}")
@@ -571,11 +830,155 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
                 "*, ocr_test_line_items(*)"
             ).eq("session_id", session_id).execute()
             
-            return response.data if response.data else []
+            # レスポンスデータの安全な処理
+            data = response.data if response.data else []
+            
+            # DataFrameの場合はリストに変換
+            if hasattr(data, 'to_dict'):
+                data = data.to_dict('records')
+            elif not isinstance(data, list):
+                data = []
+            
+            return data
             
         except Exception as e:
             logger.error(f"セッション結果読み込み中にエラー: {e}")
             return []
+
+    def analyze_error_details(self, result: Dict[str, Any], validation: Dict[str, Any]) -> Dict[str, Any]:
+        """エラー詳細分析と修正提案"""
+        analysis = {
+            "error_summary": {},
+            "missing_fields": [],
+            "correction_suggestions": [],
+            "manual_review_needed": False,
+            "retry_recommended": False
+        }
+        
+        # 必須フィールドの欠損分析
+        required_fields = {
+            "issuer_name": "請求元企業名",
+            "total_amount_tax_included": "税込金額", 
+            "currency": "通貨"
+        }
+        
+        for field, display_name in required_fields.items():
+            value = result.get(field)
+            if not self._is_valid_field_value(value):
+                analysis["missing_fields"].append({
+                    "field": field,
+                    "display_name": display_name,
+                    "current_value": value,
+                    "suggestion": self._get_field_correction_suggestion(field, result)
+                })
+        
+        # エラーカテゴリ別の修正提案
+        error_categories = validation.get("error_categories", {})
+        
+        if error_categories.get("data_missing"):
+            analysis["correction_suggestions"].append({
+                "type": "prompt_improvement",
+                "priority": "high",
+                "description": "プロンプトを調整して必須データの抽出精度を向上",
+                "action": "OCRプロンプトの必須フィールド指示を強化"
+            })
+            analysis["retry_recommended"] = True
+        
+        if error_categories.get("data_format"):
+            analysis["correction_suggestions"].append({
+                "type": "data_validation",
+                "priority": "medium", 
+                "description": "データ形式の正規化処理を追加",
+                "action": "前処理ステップでデータクリーニングを実施"
+            })
+        
+        if error_categories.get("business_logic"):
+            analysis["correction_suggestions"].append({
+                "type": "business_rule",
+                "priority": "low",
+                "description": "ビジネスルールの調整が必要",
+                "action": "個別処理ルールまたは例外設定を検討"
+            })
+        
+        # 手動レビューが必要かの判定
+        if (len(analysis["missing_fields"]) > 2 or 
+            validation["completeness_score"] < 30 or
+            any("critical" in str(error) for error in validation.get("errors", []))):
+            analysis["manual_review_needed"] = True
+        
+        return analysis
+    
+    def _get_field_correction_suggestion(self, field: str, result: Dict[str, Any]) -> str:
+        """フィールド別の修正提案を生成"""
+        if field == "issuer_name":
+            # 他のフィールドから推測可能な情報を確認
+            if result.get("key_info", {}).get("payee"):
+                return f"key_info.payeeに '{result['key_info']['payee']}' があります。これを使用可能か確認"
+            return "PDFから企業名を手動で確認し、プロンプトの企業名抽出指示を強化"
+        
+        elif field == "total_amount_tax_included":
+            # 明細から推測可能か確認
+            line_items = result.get("line_items", [])
+            if not isinstance(line_items, list):
+                line_items = []
+            if len(line_items) > 0:
+                return "明細情報は取得できています。明細合計から税込金額を計算することを検討"
+            return "金額情報の抽出ルールを見直し、数値フォーマットの認識を改善"
+        
+        elif field == "currency":
+            # 他の金額フィールドから推測
+            if result.get("total_amount_tax_included") or result.get("total_amount_tax_excluded"):
+                return "金額は取得できているため、通貨はJPYと推定。自動補完ルールを追加"
+            return "PDFから通貨表記を確認し、通貨コード抽出の指示を強化"
+        
+        return "個別確認が必要です"
+
+    def create_correction_workflow(self, error_files: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """エラーファイルの修正ワークフローを作成"""
+        workflow = {
+            "total_errors": len(error_files),
+            "correction_plan": {
+                "prompt_adjustments": [],
+                "manual_reviews": [],
+                "system_improvements": []
+            },
+            "priority_order": []
+        }
+        
+        for error_file in error_files:
+            result = error_file["ocr_result"]
+            validation = error_file["validation"]
+            analysis = self.analyze_error_details(result, validation)
+            
+            file_info = {
+                "filename": error_file["filename"],
+                "completeness_score": validation["completeness_score"],
+                "analysis": analysis,
+                "priority": "high" if analysis["manual_review_needed"] else "medium"
+            }
+            
+            workflow["priority_order"].append(file_info)
+            
+            # 修正提案を分類
+            for suggestion in analysis["correction_suggestions"]:
+                if suggestion["type"] == "prompt_improvement":
+                    workflow["correction_plan"]["prompt_adjustments"].append({
+                        "file": error_file["filename"],
+                        "suggestion": suggestion
+                    })
+                elif suggestion["type"] == "data_validation":
+                    workflow["correction_plan"]["system_improvements"].append({
+                        "file": error_file["filename"],
+                        "suggestion": suggestion
+                    })
+            
+            if analysis["manual_review_needed"]:
+                workflow["correction_plan"]["manual_reviews"].append(file_info)
+        
+        # 優先順位でソート（完全性スコアが低い順）
+        workflow["priority_order"].sort(key=lambda x: x["completeness_score"])
+        
+        return workflow
 
 
 def display_results_with_aggrid(test_results: Dict[str, Any]) -> None:
@@ -636,7 +1039,7 @@ def display_results_with_aggrid(test_results: Dict[str, Any]) -> None:
                 "ファイルサイズ": f"{file_size:,} bytes"
             })
         
-        if results_data and len(results_data) > 0:
+        if len(results_data) > 0:
             df = pd.DataFrame(results_data)
             
             # ag-gridで表示
@@ -652,66 +1055,81 @@ def display_results_with_aggrid(test_results: Dict[str, Any]) -> None:
             )
             
             # 選択された行の詳細表示
-            if grid_response and grid_response.get("selected_rows"):
-                selected_row = grid_response["selected_rows"][0]
+            selected_rows = aggrid_manager.get_selected_rows(grid_response)
+            
+            # selected_rowsの安全な処理
+            if hasattr(selected_rows, 'to_dict'):
+                selected_rows = selected_rows.to_dict('records')
+            elif not isinstance(selected_rows, list):
+                selected_rows = []
+            
+            if len(selected_rows) > 0:
+                selected_row = selected_rows[0]
                 filename = selected_row["ファイル名"]
                 
                 st.markdown(f"### 📄 選択されたファイル: {filename}")
                 
                 # 該当する詳細結果を取得
-                selected_result = next(
-                    r for r in test_results["results"] 
-                    if r["filename"] == filename
-                )
+                try:
+                    selected_result = next(
+                        r for r in test_results["results"] 
+                        if r["filename"] == filename
+                    )
+                except StopIteration:
+                    st.error(f"❌ ファイル '{filename}' の詳細結果が見つかりません")
+                    selected_result = None
                 
                 # 詳細情報を表示
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown("**基本情報**")
-                    ocr_result = selected_result["ocr_result"]
-                    for key, value in ocr_result.items():
-                        if key != "line_items" and value is not None:
-                            st.write(f"• **{key}**: {value}")
-                
-                with col2:
-                    st.markdown("**検証結果**")
-                    validation = selected_result["validation"]
-                    st.write(f"• **検証状況**: {'✅ 正常' if validation['is_valid'] else '❌ エラー'}")
-                    st.write(f"• **完全性スコア**: {validation['completeness_score']:.1f}%")
+                if selected_result is not None:
+                    col1, col2 = st.columns(2)
                     
-                    if validation["errors"]:
-                        st.write("• **エラー**:")
-                        for error in validation["errors"]:
-                            st.write(f"  - {error}")
+                    with col1:
+                        st.markdown("**基本情報**")
+                        ocr_result = selected_result["ocr_result"]
+                        for key, value in ocr_result.items():
+                            if key != "line_items" and value is not None:
+                                st.write(f"• **{key}**: {value}")
                     
-                    if validation["warnings"]:
-                        st.write("• **警告**:")
-                        for warning in validation["warnings"]:
-                            st.write(f"  - {warning}")
-                
-                # 明細表示
-                line_items = ocr_result.get("line_items", [])
-                if line_items:
-                    st.markdown("**明細情報**")
-                    line_items_df = pd.DataFrame([
-                        {
-                            "No.": i+1,
-                            "商品・サービス名": item.get("description", ""),
-                            "数量": item.get("quantity", ""),
-                            "単価": item.get("unit_price", ""),
-                            "金額": item.get("amount", ""),
-                            "税率": item.get("tax", "")
-                        }
-                        for i, item in enumerate(line_items)
-                    ])
+                    with col2:
+                        st.markdown("**検証結果**")
+                        validation = selected_result["validation"]
+                        st.write(f"• **検証状況**: {'✅ 正常' if validation['is_valid'] else '❌ エラー'}")
+                        st.write(f"• **完全性スコア**: {validation['completeness_score']:.1f}%")
+                        
+                        if validation["errors"]:
+                            st.write("• **エラー**:")
+                            for error in validation["errors"]:
+                                st.write(f"  - {error}")
+                        
+                        if validation["warnings"]:
+                            st.write("• **警告**:")
+                            for warning in validation["warnings"]:
+                                st.write(f"  - {warning}")
                     
-                    aggrid_manager.create_data_grid(
-                        line_items_df,
-                        editable=False,
-                        fit_columns_on_grid_load=True,
-                        height=200
-                    )
+                    # 明細表示
+                    line_items = ocr_result.get("line_items", [])
+                    if not isinstance(line_items, list):
+                        line_items = []
+                    if len(line_items) > 0:
+                        st.markdown("**明細情報**")
+                        line_items_df = pd.DataFrame([
+                            {
+                                "No.": i+1,
+                                "商品・サービス名": item.get("description", ""),
+                                "数量": item.get("quantity", ""),
+                                "単価": item.get("unit_price", ""),
+                                "金額": item.get("amount", ""),
+                                "税率": item.get("tax", "")
+                            }
+                            for i, item in enumerate(line_items)
+                        ])
+                        
+                        aggrid_manager.create_data_grid(
+                            line_items_df,
+                            editable=False,
+                            fit_columns_on_grid_load=True,
+                            height=200
+                        )
                 
     except ImportError:
         st.warning("ag-gridライブラリが利用できません。標準のDataFrameで表示します。")
@@ -723,14 +1141,14 @@ def display_results_with_aggrid(test_results: Dict[str, Any]) -> None:
         # デバッグ情報を表示
         st.subheader("🔍 デバッグ情報")
         st.write("**データ型情報:**")
-        if results_data and len(results_data) > 0:
+        if len(results_data) > 0:
             sample_data = results_data[0]
             for key, value in sample_data.items():
                 st.write(f"• {key}: {type(value)} = {repr(value)}")
         
         # 代替表示
         st.subheader("📊 代替表示（標準DataFrame）")
-        if results_data and len(results_data) > 0:
+        if len(results_data) > 0:
             df = pd.DataFrame(results_data)
             st.dataframe(df, use_container_width=True)
 
@@ -743,13 +1161,19 @@ def display_session_history(ocr_test_manager: 'OCRTestManager', user_email: str)
     
     sessions = ocr_test_manager.load_sessions_from_supabase(user_email)
     
-    if not sessions:
+    # DataFrameの場合はリストに変換
+    if hasattr(sessions, 'to_dict'):
+        sessions = sessions.to_dict('records')
+    elif not isinstance(sessions, list):
+        sessions = []
+    
+    if len(sessions) == 0:
         st.info("過去のテスト履歴がありません")
         return
     
     # セッション選択
     session_options = [
-        f"{session['session_name']} ({session['created_at'][:10]}) - 成功率: {session['success_rate']}%"
+        f"{session['session_name']} ({convert_utc_to_jst(session['created_at'])}) - 成功率: {session['success_rate']}%"
         for session in sessions
     ]
     
@@ -777,7 +1201,13 @@ def display_session_history(ocr_test_manager: 'OCRTestManager', user_email: str)
         # セッション結果を取得
         session_results = ocr_test_manager.load_session_results(session_id)
         
-        if session_results:
+        # DataFrameの場合はリストに変換
+        if hasattr(session_results, 'to_dict'):
+            session_results = session_results.to_dict('records')
+        elif not isinstance(session_results, list):
+            session_results = []
+        
+        if len(session_results) > 0:
             try:
                 from infrastructure.ui.aggrid_helper import get_aggrid_manager
                 
@@ -807,23 +1237,157 @@ def display_session_history(ocr_test_manager: 'OCRTestManager', user_email: str)
                             "発行日": str(result["issue_date"]) if result["issue_date"] else "",
                             "検証状況": "✅ 正常" if result["is_valid"] else "❌ エラー",
                             "完全性スコア": completeness_score,
-                            "処理日時": str(result["created_at"][:16])
+                            "処理日時": convert_utc_to_jst(result["created_at"])
                         })
                     
-                    if history_data:
+                    if len(history_data) > 0:
                         df_history = pd.DataFrame(history_data)
                         
                         st.subheader("履歴詳細 (ag-grid)")
-                        aggrid_manager.create_data_grid(
+                        grid_response = aggrid_manager.create_data_grid(
                             df_history,
                             editable=False,
                             fit_columns_on_grid_load=True,
                             selection_mode="single",
                             height=400
                         )
-                
+                        
+                        # 選択された行の詳細表示
+                        selected_rows = aggrid_manager.get_selected_rows(grid_response)
+                        
+                        # selected_rowsの安全な処理
+                        if hasattr(selected_rows, 'to_dict'):
+                            selected_rows = selected_rows.to_dict('records')
+                        elif not isinstance(selected_rows, list):
+                            selected_rows = []
+                        
+                        if len(selected_rows) > 0:
+                            selected_row = selected_rows[0]
+                            filename = selected_row["ファイル名"]
+                            
+                            st.markdown(f"### 📄 選択されたファイル: {filename}")
+                            
+                            # 該当する詳細結果を取得
+                            try:
+                                selected_result = next(
+                                    r for r in session_results 
+                                    if r["filename"] == filename
+                                )
+                            except StopIteration:
+                                st.error(f"❌ ファイル '{filename}' の詳細結果が見つかりません")
+                                selected_result = None
+                            
+                            # 詳細情報を表示
+                            if selected_result is not None:
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    st.markdown("**基本情報**")
+                                    st.write(f"• **請求元**: {selected_result.get('issuer_name', '')}")
+                                    st.write(f"• **請求先**: {selected_result.get('recipient_name', '')}")
+                                    st.write(f"• **請求書番号**: {selected_result.get('invoice_number', '')}")
+                                    st.write(f"• **税込金額**: {selected_result.get('total_amount_tax_included', 0):,}円")
+                                    st.write(f"• **通貨**: {selected_result.get('currency', '')}")
+                                    st.write(f"• **発行日**: {selected_result.get('issue_date', '')}")
+                                
+                                with col2:
+                                    st.markdown("**検証結果**")
+                                    is_valid = selected_result.get("is_valid", False)
+                                    st.write(f"• **検証状況**: {'✅ 正常' if is_valid else '❌ エラー'}")
+                                    st.write(f"• **完全性スコア**: {selected_result.get('completeness_score', 0):.1f}%")
+                                    
+                                    # エラー・警告表示（履歴データから）
+                                    validation_errors = selected_result.get("validation_errors", [])
+                                    validation_warnings = selected_result.get("validation_warnings", [])
+                                    
+                                    # DataFrameの場合はリストに変換
+                                    if hasattr(validation_errors, 'tolist'):
+                                        validation_errors = validation_errors.tolist()
+                                    elif hasattr(validation_errors, 'to_dict'):
+                                        validation_errors = validation_errors.to_dict('records')
+                                    elif not isinstance(validation_errors, list):
+                                        validation_errors = []
+                                    
+                                    if hasattr(validation_warnings, 'tolist'):
+                                        validation_warnings = validation_warnings.tolist()
+                                    elif hasattr(validation_warnings, 'to_dict'):
+                                        validation_warnings = validation_warnings.to_dict('records')
+                                    elif not isinstance(validation_warnings, list):
+                                        validation_warnings = []
+                                    
+                                    if len(validation_errors) > 0:
+                                        st.write("• **エラー**:")
+                                        for error in validation_errors:
+                                            st.write(f"  - {error}")
+                                    
+                                    if len(validation_warnings) > 0:
+                                        st.write("• **警告**:")
+                                        for warning in validation_warnings:
+                                            st.write(f"  - {warning}")
+                                
+                                # エラーファイルの場合、修正提案を表示
+                                if not is_valid:
+                                    st.markdown("---")
+                                    st.markdown("### 🔧 エラー修正提案")
+                                    
+                                    # raw_responseから詳細なデータを復元
+                                    raw_response = selected_result.get("raw_response", {})
+                                    
+                                    # DataFrameの場合は辞書に変換
+                                    if hasattr(raw_response, 'to_dict'):
+                                        raw_response = raw_response.to_dict()
+                                    elif not isinstance(raw_response, dict):
+                                        raw_response = {}
+                                    
+                                    if len(raw_response) > 0:
+                                        # 簡易的な修正提案を表示
+                                        col1, col2 = st.columns(2)
+                                        
+                                        with col1:
+                                            st.markdown("**欠損している可能性のあるフィールド:**")
+                                            
+                                            # 必須フィールドチェック
+                                            required_checks = [
+                                                ("請求元企業名", raw_response.get("issuer_name")),
+                                                ("税込金額", raw_response.get("total_amount_tax_included")),
+                                                ("通貨", raw_response.get("currency"))
+                                            ]
+                                            
+                                            for field_name, value in required_checks:
+                                                if not value:
+                                                    st.write(f"❌ {field_name}")
+                                                else:
+                                                    st.write(f"✅ {field_name}: {value}")
+                                        
+                                        with col2:
+                                            st.markdown("**推奨修正アクション:**")
+                                            st.write("• プロンプト調整を検討")
+                                            st.write("• ファイル品質を確認")
+                                            st.write("• 手動補正を実施")
+                    else:
+                        st.info("テスト結果データがありません")
+                        
             except ImportError:
-                st.warning("ag-gridライブラリが利用できません")
+                st.warning("ag-gridライブラリが利用できません。標準表示を使用します。")
+                
+                # 標準的なDataFrame表示
+                if len(session_results) > 0:
+                    history_df = pd.DataFrame([
+                        {
+                            "ファイル名": result["filename"],
+                            "請求元": result.get("issuer_name", ""),
+                            "請求書番号": result.get("invoice_number", ""),
+                            "通貨": result.get("currency", ""),
+                            "税込金額": result.get("total_amount_tax_included", 0),
+                            "検証状況": "✅ 正常" if result.get("is_valid") else "❌ エラー",
+                            "完全性スコア": result.get("completeness_score", 0),
+                            "処理日時": convert_utc_to_jst(result["created_at"])
+                        }
+                        for result in session_results
+                    ])
+                    st.dataframe(history_df, use_container_width=True)
+        else:
+            st.info("選択されたセッションの結果データがありません")
 
 
 def create_ocr_test_app():
@@ -875,7 +1439,13 @@ def create_ocr_test_app():
             with st.spinner("PDFファイル一覧を取得中..."):
                 pdf_files = ocr_test_manager.get_drive_pdfs(folder_id)
                 
-                if pdf_files:
+                # DataFrameの場合はリストに変換
+                if hasattr(pdf_files, 'to_dict'):
+                    pdf_files = pdf_files.to_dict('records')
+                elif not isinstance(pdf_files, list):
+                    pdf_files = []
+                
+                if len(pdf_files) > 0:
                     st.success(f"{len(pdf_files)}個のPDFファイルが見つかりました")
                     
                     # ファイル一覧表示
@@ -883,7 +1453,7 @@ def create_ocr_test_app():
                         {
                             "ファイル名": f["name"],
                             "サイズ": f.get("size", "不明"),
-                            "更新日時": f.get("modifiedTime", "不明")[:10] if f.get("modifiedTime") else "不明",
+                            "更新日時": convert_utc_to_jst(f.get("modifiedTime", "")) if f.get("modifiedTime") else "不明",
                             "ファイルID": f["id"]
                         }
                         for f in pdf_files
@@ -927,14 +1497,14 @@ def create_ocr_test_app():
                         st.session_state.test_results = test_results
                         
                         # Supabaseに保存
-                        if test_results.get("results"):
+                        if len(test_results.get("results", [])) > 0:
                             session_id = ocr_test_manager.save_to_supabase(test_results, user_email)
                             if session_id:
                                 st.success(f"✅ 結果をデータベースに保存しました (セッションID: {session_id})")
                                 st.session_state.current_session_id = session_id
         
         # テスト結果表示
-        if hasattr(st.session_state, 'test_results') and st.session_state.test_results.get("results"):
+        if hasattr(st.session_state, 'test_results') and len(st.session_state.test_results.get("results", [])) > 0:
             st.markdown("---")
             st.subheader("📊 テスト結果")
             
@@ -956,54 +1526,6 @@ def create_ocr_test_app():
             
             # ag-gridでの表示
             display_results_with_aggrid(test_results)
-            
-            # 詳細結果表示（従来版も残す）
-            with st.expander("📋 詳細結果（従来表示）", expanded=False):
-                # ファイル選択
-                result_files = [r["filename"] for r in test_results["results"]]
-                selected_file = st.selectbox("表示するファイルを選択", result_files)
-                
-                if selected_file:
-                    # 選択されたファイルの結果を取得
-                    selected_result = next(
-                        r for r in test_results["results"] 
-                        if r["filename"] == selected_file
-                    )
-                    
-                    ocr_result = selected_result["ocr_result"]
-                    validation = selected_result["validation"]
-                    
-                    # 検証結果表示
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        status_color = "🟢" if validation["is_valid"] else "🔴"
-                        st.write(f"{status_color} **検証ステータス**: {'正常' if validation['is_valid'] else 'エラーあり'}")
-                        st.write(f"📊 **完全性スコア**: {validation['completeness_score']:.1f}%")
-                    
-                    with col2:
-                        if validation["errors"]:
-                            st.error("エラー:")
-                            for error in validation["errors"]:
-                                st.write(f"❌ {error}")
-                                
-                        if validation["warnings"]:
-                            st.warning("警告:")
-                            for warning in validation["warnings"]:
-                                st.write(f"⚠️ {warning}")
-                    
-                    # OCR結果表示
-                    df_basic, df_details = ocr_test_manager.format_ocr_result_for_display(ocr_result, validation)
-                    
-                    st.subheader("基本情報")
-                    st.dataframe(df_basic, use_container_width=True)
-                    
-                    if not df_details.empty:
-                        st.subheader("明細情報")
-                        st.dataframe(df_details, use_container_width=True)
-                    
-                    # JSON表示
-                    with st.expander("生JSONデータ"):
-                        st.json(ocr_result)
     
     with tab2:
         # テスト履歴表示

@@ -330,7 +330,13 @@ def handle_grid_interactions(grid_response, original_data):
         # 選択行の処理
         selected_rows = grid_response.get('selected_rows', [])
         
-        if selected_rows:
+        # selected_rowsの安全な処理
+        if hasattr(selected_rows, 'to_dict'):
+            selected_rows = selected_rows.to_dict('records')
+        elif not isinstance(selected_rows, list):
+            selected_rows = []
+        
+        if len(selected_rows) > 0:
             st.markdown(f"### 📌 選択済み: {len(selected_rows)} 件")
             
             # 一括操作ボタン

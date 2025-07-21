@@ -343,13 +343,29 @@ class AgGridManager:
     def export_to_dataframe(self, grid_response) -> pd.DataFrame:
         """ag-gridの結果をDataFrameに変換"""
         if grid_response and 'data' in grid_response:
-            return pd.DataFrame(grid_response['data'])
+            data = grid_response['data']
+            
+            # 既にDataFrameの場合はそのまま返す
+            if isinstance(data, pd.DataFrame):
+                return data
+            # リストの場合はDataFrameに変換
+            elif isinstance(data, list):
+                return pd.DataFrame(data)
+            
         return pd.DataFrame()
     
     def get_selected_rows(self, grid_response) -> List[Dict[str, Any]]:
         """選択された行を取得"""
         if grid_response and 'selected_rows' in grid_response:
-            return grid_response['selected_rows']
+            selected_rows = grid_response['selected_rows']
+            
+            # DataFrameの場合はリストに変換
+            if hasattr(selected_rows, 'to_dict'):
+                selected_rows = selected_rows.to_dict('records')
+            elif not isinstance(selected_rows, list):
+                selected_rows = []
+            
+            return selected_rows
         return []
     
     def test_database_integration(self, df: pd.DataFrame) -> Dict[str, Any]:

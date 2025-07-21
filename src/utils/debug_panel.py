@@ -20,6 +20,21 @@ def render_debug_panel():
     except Exception:
         pass
 
+def render_sidebar_debug_panel():
+    """サイドバー用デバッグパネルをレンダリング"""
+    try:
+        # ログイン状態を確認
+        from infrastructure.auth.oauth_handler import get_current_user
+        user_info = get_current_user()
+        
+        # ログインしていない場合はデバッグパネルを表示しない
+        if not user_info:
+            return
+            
+        show_sidebar_debug_panel()
+    except Exception:
+        pass
+
 def show_debug_panel():
     """デバッグ情報を表示"""
     if not st.secrets.get("app", {}).get("debug", False):
@@ -168,4 +183,99 @@ def show_ocr_results_debug():
         st.write("**処理結果:**")
         for i, result in enumerate(results.get("results", [])):
             with st.expander(f"ファイル {i+1}: {result.get('filename', 'unknown')}"):
-                st.json(result) 
+                st.json(result)
+
+def show_sidebar_debug_panel():
+    """サイドバー用デバッグ情報を表示（コンパクト版）"""
+    if not st.secrets.get("app", {}).get("debug", False):
+        return
+        
+    with st.expander("🔧 デバッグパネル", expanded=False):
+        # セッション状態の要約
+        st.subheader("📋 セッション状態")
+        
+        # OCRテスト結果の確認
+        if "ocr_test_results" in st.session_state:
+            results = st.session_state.ocr_test_results
+            st.success(f"✅ OCR結果: {results.get('files_success', 0)}件成功")
+        else:
+            st.warning("❌ OCRテスト結果なし")
+        
+        # データベース履歴の確認
+        st.subheader("🗄️ データベース履歴")
+        
+        # SessionStateでボタンの重複実行を防ぐ
+        if 'sidebar_debug_session_check_executed' not in st.session_state:
+            st.session_state.sidebar_debug_session_check_executed = False
+        
+        if st.button("🔍 履歴確認", key="sidebar_debug_check_sessions_btn", use_container_width=True):
+            st.session_state.sidebar_debug_session_check_executed = True
+        
+        # 結果の表示（コンパクト版）
+        if st.session_state.sidebar_debug_session_check_executed:
+            try:
+                # Service Role Keyを使用してRLS回避
+                try:
+                    service_key = st.secrets["database"]["supabase_service_key"]
+                    supabase_url = st.secrets["database"]["supabase_url"]
+                    
+                    from supabase import create_client
+                    service_supabase = create_client(supabase_url, service_key)
+                    
+                    st.info("🔑 Service Role接続")
+                    
+                except Exception as e:
+                    st.warning(f"Service Role失敗: {e}")
+                    from infrastructure.database.database import get_database
+                    database = get_database()
+                    service_supabase = database.supabase
+                
+                # 現在のユーザー情報取得
+                from infrastructure.auth.oauth_handler import get_current_user
+                user_info = get_current_user()
+                user_email = user_info.get('email', '') if user_info else ''
+                
+                if user_email:
+                    # セッション履歴を直接取得
+                    response = service_supabase.table("ocr_test_sessions").select("*").eq("created_by", user_email).order("created_at", desc=True).limit(5).execute()
+                    
+                    if response.data:
+                        st.success(f"✅ {len(response.data)}件のセッション")
+                        
+                        # コンパクト表示
+                        for i, session in enumerate(response.data):
+                            session_id = session.get('id', 'N/A')[:8]
+                            created_at = session.get('created_at', 'N/A')
+                            st.caption(f"{i+1}. {session_id}... ({created_at[:10]})")
+                    else:
+                        st.warning("⚠️ セッション履歴なし")
+                else:
+                    st.error("❌ ユーザー情報取得失敗")
+                    
+            except Exception as e:
+                st.error(f"❌ DB確認エラー: {str(e)[:50]}...")
+            
+            # リセットボタン
+            if st.button("🔄 クリア", key="sidebar_debug_clear_results", use_container_width=True):
+                st.session_state.sidebar_debug_session_check_executed = False
+                st.rerun()
+        
+        # セッション状態クリア
+        st.subheader("🧹 セッション管理")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🧹 Debug", key="sidebar_debug_clear_session", use_container_width=True):
+                keys_to_remove = [k for k in st.session_state.keys() if k.startswith('debug_')]
+                for key in keys_to_remove:
+                    del st.session_state[key]
+                st.success("✅ Debugクリア完了")
+                st.rerun()
+        
+        with col2:
+            if st.button("🗑️ All", key="sidebar_debug_clear_all", use_container_width=True):
+                st.session_state.clear()
+                st.success("✅ 全クリア完了")
+                st.rerun()
+        
+        # キー数の表示
+        st.caption(f"現在のキー数: {len(st.session_state.keys())}")
