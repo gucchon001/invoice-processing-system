@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiAPIManager:
-    """Gemini API管理クラス"""
+    """Gemini API管理クラス（JSONプロンプト対応版）"""
     
     def __init__(self):
         """Gemini API接続を初期化"""
@@ -153,9 +153,35 @@ class GeminiAPIManager:
         return None
     
     def extract_invoice_data(self, pdf_content: bytes) -> Optional[Dict[str, Any]]:
-        """請求書データ抽出（専用プロンプト使用）"""
+        """請求書データ抽出（JSONプロンプト使用）"""
+        try:
+            # プロンプトマネージャーを使用してJSON外出しプロンプト読み込み
+            from utils.prompt_manager import get_prompt_manager
+            
+            prompt_manager = get_prompt_manager()
+            
+            # 請求書抽出プロンプトの生成
+            invoice_prompt = prompt_manager.render_prompt(
+                "invoice_extractor_prompt",
+                {
+                    "invoice_image": pdf_content,  # PDF内容は変数として渡す
+                    "extraction_mode": "comprehensive"
+                }
+            )
+            
+            logger.info("JSONプロンプトを使用して請求書データ抽出を実行")
+            return self.analyze_pdf_content(pdf_content, invoice_prompt)
+            
+        except Exception as e:
+            logger.error(f"JSONプロンプト読み込みエラー: {e}")
+            # フォールバック: 旧形式プロンプトを使用
+            logger.warning("フォールバック: レガシープロンプトを使用")
+            return self._extract_invoice_data_legacy(pdf_content)
+    
+    def _extract_invoice_data_legacy(self, pdf_content: bytes) -> Optional[Dict[str, Any]]:
+        """請求書データ抽出（レガシープロンプト・フォールバック用）"""
         
-        # 請求書情報抽出用プロンプト
+        # レガシー請求書情報抽出用プロンプト（フォールバック用）
         invoice_prompt = """
 あなたは高精度なOCRと自然言語処理能力を持つAIアシスタントです。
 アップロードされた請求書PDFから以下の情報を抽出してください。
@@ -201,6 +227,91 @@ class GeminiAPIManager:
 """
         
         return self.analyze_pdf_content(pdf_content, invoice_prompt)
+    
+    def extract_pdf_invoice_data(self, pdf_content: bytes) -> Optional[Dict[str, Any]]:
+        """
+        請求書PDFデータ抽出（統合メソッド）
+        強化版抽出機能も提供
+        """
+        try:
+            # まず強化版抽出を試行
+            from infrastructure.ai.invoice_matcher import get_invoice_matcher
+            
+            matcher_service = get_invoice_matcher()
+            result = matcher_service.enhanced_invoice_extraction(pdf_content)
+            
+            if result:
+                logger.info("強化版請求書抽出成功")
+                return result
+            else:
+                logger.warning("強化版抽出失敗、基本版にフォールバック")
+                return self.extract_invoice_data(pdf_content)
+                
+        except Exception as e:
+            logger.error(f"統合抽出エラー: {e}")
+            # 基本版にフォールバック
+            return self.extract_invoice_data(pdf_content)
+    
+    def match_company_name(self, issuer_name: str, master_company_list: List[str]) -> Optional[Dict[str, Any]]:
+        """
+        企業名照合（JSONプロンプト版）
+        
+        Args:
+            issuer_name: 請求書の請求元名
+            master_company_list: 支払マスタの企業名リスト
+            
+        Returns:
+            照合結果辞書またはNone
+        """
+        try:
+            from infrastructure.ai.invoice_matcher import get_invoice_matcher
+            
+            matcher_service = get_invoice_matcher()
+            return matcher_service.match_company_name(issuer_name, master_company_list)
+            
+        except Exception as e:
+            logger.error(f"企業名照合エラー: {e}")
+            return None
+    
+    def match_integrated_invoice(self, invoice_data: Dict[str, Any], 
+                               master_records: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """
+        統合照合（JSONプロンプト版）
+        
+        Args:
+            invoice_data: 請求書から抽出された詳細情報
+            master_records: 支払マスタから絞り込まれた候補レコードのリスト
+            
+        Returns:
+            照合結果辞書またはNone
+        """
+        try:
+            from infrastructure.ai.invoice_matcher import get_invoice_matcher
+            
+            matcher_service = get_invoice_matcher()
+            return matcher_service.match_integrated_invoice(invoice_data, master_records)
+            
+        except Exception as e:
+            logger.error(f"統合照合エラー: {e}")
+            return None
+    
+    def test_json_prompts(self) -> Dict[str, Any]:
+        """JSONプロンプト機能の包括テスト"""
+        try:
+            from infrastructure.ai.invoice_matcher import get_invoice_matcher
+            
+            matcher_service = get_invoice_matcher()
+            return matcher_service.test_prompts()
+            
+        except Exception as e:
+            logger.error(f"JSONプロンプトテストエラー: {e}")
+            return {
+                "invoice_extractor": False,
+                "master_matcher": False,
+                "integrated_matcher": False,
+                "prompt_loading": False,
+                "errors": [f"テスト実行エラー: {e}"]
+            }
 
 
 # シングルトンパターンでインスタンスを作成

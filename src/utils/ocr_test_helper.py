@@ -111,7 +111,32 @@ class OCRTestManager:
             return None
     
     def create_ocr_prompt(self) -> str:
-        """OCR用のプロンプトを作成"""
+        """OCR用のプロンプトを作成（JSON外出し対応）"""
+        try:
+            # プロンプトマネージャーを使用してJSON外出しプロンプト読み込み
+            from utils.prompt_manager import get_prompt_manager
+            
+            prompt_manager = get_prompt_manager()
+            
+            # OCR抽出プロンプトの生成
+            ocr_prompt = prompt_manager.render_prompt(
+                "invoice_extractor_prompt",
+                {
+                    "extraction_mode": "comprehensive"
+                }
+            )
+            
+            logger.info("JSONプロンプトを使用してOCRプロンプトを生成")
+            return ocr_prompt
+            
+        except Exception as e:
+            logger.error(f"JSONプロンプト読み込みエラー: {e}")
+            # フォールバック: レガシープロンプトを使用
+            logger.warning("フォールバック: レガシーOCRプロンプトを使用")
+            return self._create_ocr_prompt_legacy()
+    
+    def _create_ocr_prompt_legacy(self) -> str:
+        """OCR用レガシープロンプト（フォールバック用）"""
         return """
 あなたは請求書のOCR専門家です。アップロードされたPDFから以下の情報を正確に抽出してJSON形式で返してください。
 

@@ -797,8 +797,83 @@ def render_gemini_test_page():
             - 🔍 **個別処理**: 特定ファイルのみ処理
             """)
     
-    # プロンプトテスト
-    st.markdown("### 🎯 カスタムプロンプトテスト")
+    # JSONプロンプトテスト
+    st.markdown("### 🎯 JSONプロンプトシステムテスト")
+    
+    col_test1, col_test2 = st.columns(2)
+    
+    with col_test1:
+        if st.button("🔍 JSONプロンプト機能テスト", use_container_width=True):
+            with st.spinner("JSONプロンプト機能をテスト中..."):
+                try:
+                    gemini_api = get_gemini_api()
+                    test_results = gemini_api.test_json_prompts()
+                    
+                    st.markdown("#### 📊 テスト結果")
+                    
+                    # 結果サマリー
+                    total_tests = 4
+                    passed_tests = sum([
+                        test_results["invoice_extractor"],
+                        test_results["master_matcher"], 
+                        test_results["integrated_matcher"],
+                        test_results["prompt_loading"]
+                    ])
+                    
+                    if passed_tests == total_tests:
+                        st.success(f"🎉 全テスト成功！ ({passed_tests}/{total_tests})")
+                    else:
+                        st.warning(f"⚠️ 一部テスト失敗 ({passed_tests}/{total_tests})")
+                    
+                    # 詳細結果
+                    col_result1, col_result2 = st.columns(2)
+                    
+                    with col_result1:
+                        st.write("**📋 プロンプト読み込み**")
+                        st.write(f"✅ 請求書抽出: {'成功' if test_results['invoice_extractor'] else '失敗'}")
+                        st.write(f"✅ 企業名照合: {'成功' if test_results['master_matcher'] else '失敗'}")
+                    
+                    with col_result2:
+                        st.write("**🔄 統合機能**")
+                        st.write(f"✅ 統合照合: {'成功' if test_results['integrated_matcher'] else '失敗'}")
+                        st.write(f"✅ プロンプト管理: {'成功' if test_results['prompt_loading'] else '失敗'}")
+                    
+                    # エラー詳細
+                    if test_results.get("errors"):
+                        with st.expander("🚨 エラー詳細", expanded=False):
+                            for error in test_results["errors"]:
+                                st.error(error)
+                                
+                except Exception as e:
+                    st.error(f"JSONプロンプトテストエラー: {e}")
+    
+    with col_test2:
+        if st.button("📋 企業名照合デモ", use_container_width=True):
+            with st.spinner("企業名照合デモを実行中..."):
+                try:
+                    # サンプルデータで照合テスト
+                    issuer_name = "グーグル合同会社"
+                    master_list = ["Google合同会社", "Amazon Japan合同会社", "マイクロソフト株式会社"]
+                    
+                    gemini_api = get_gemini_api()
+                    result = gemini_api.match_company_name(issuer_name, master_list)
+                    
+                    st.markdown("#### 🔍 照合デモ結果")
+                    st.write(f"**請求元名**: {issuer_name}")
+                    st.write(f"**マスタリスト**: {', '.join(master_list)}")
+                    
+                    if result and result.get("matched_company_name"):
+                        st.success(f"✅ 照合成功: {result['matched_company_name']}")
+                        st.write(f"**確信度**: {result.get('confidence_score', 0):.2f}")
+                        st.write(f"**照合理由**: {result.get('matching_reason', 'N/A')}")
+                    else:
+                        st.warning("❌ 照合失敗または確信度不足")
+                        
+                except Exception as e:
+                    st.error(f"企業名照合デモエラー: {e}")
+    
+    # カスタムプロンプトテスト
+    st.markdown("### 💬 カスタムプロンプトテスト")
     
     prompt_input = st.text_area(
         "テスト用プロンプトを入力",
