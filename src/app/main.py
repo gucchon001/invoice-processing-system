@@ -12,6 +12,8 @@ import os
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
+from typing import Dict, Any
+import json
 
 # プロジェクトルートをPythonパスに追加（新しい構造対応）
 project_root = Path(__file__).parent.parent  # src/ ディレクトリ
@@ -895,6 +897,281 @@ def render_gemini_test_page():
                     
             except Exception as e:
                 st.error(f"プロンプト実行エラー: {e}")
+
+    # 統合テスト機能
+    st.markdown("### 🧪 JSONプロンプト統合テスト")
+    st.markdown("実際のPDFファイルを使用した包括的な精度検証とベースライン策定を実行します。")
+    
+    col_integration1, col_integration2 = st.columns(2)
+    
+    with col_integration1:
+        st.markdown("#### 📋 テスト設定")
+        
+        # テスト用フォルダID入力
+        test_folder_id = st.text_input(
+            "テスト用Google DriveフォルダID",
+            placeholder="PDFファイルが格納されたフォルダのID",
+            help="テスト用請求書PDFが格納されたGoogle DriveフォルダのIDを入力してください"
+        )
+        
+        # サンプル数設定
+        sample_size = st.slider(
+            "テスト対象PDFファイル数",
+            min_value=5, max_value=50, value=10,
+            help="テストに使用するPDFファイルの数を設定します"
+        )
+        
+        # テスト実行ボタン
+        if st.button("🔬 統合テスト実行", use_container_width=True):
+            if not test_folder_id:
+                st.error("テスト用フォルダIDを入力してください")
+            else:
+                run_integration_test(test_folder_id, sample_size)
+    
+    with col_integration2:
+        st.markdown("#### 📊 テスト項目")
+        st.markdown("""
+        **🔍 PDF情報抽出テスト**
+        - JSONプロンプトによる基本情報抽出
+        - データ完全性の評価
+        - 処理時間の測定
+        
+        **🔑 キー情報抽出精度テスト**
+        - アカウントID、契約番号等の重要情報
+        - 抽出精度の定量評価
+        - 優先度別成功率測定
+        
+        **🏢 企業名照合テスト**
+        - 表記揺れ対応精度
+        - 確信度計算の適切性
+        - マッチング成功率
+        
+        **🔄 統合照合テスト**
+        - 請求書と支払マスタの照合
+        - 総合判定精度
+        - エンドツーエンド成功率
+        """)
+
+def run_integration_test(test_folder_id: str, sample_size: int):
+    """統合テストを実行"""
+    with st.spinner(f"統合テスト実行中（{sample_size}件のPDFを処理）..."):
+        try:
+            # 必要なモジュールをインポート
+            from infrastructure.storage.google_drive_helper import get_google_drive
+            from infrastructure.ai.gemini_helper import get_gemini_api
+            from infrastructure.database.database import get_database
+            from utils.integration_test_manager import get_integration_test_manager
+            
+            # マネージャー初期化
+            drive_manager = get_google_drive()
+            gemini_manager = get_gemini_api()
+            database_manager = get_database()
+            
+            if not drive_manager or not gemini_manager:
+                st.error("Google DriveまたはGemini APIの初期化に失敗しました")
+                return
+            
+            # 統合テストマネージャー取得
+            test_manager = get_integration_test_manager(drive_manager, gemini_manager, database_manager)
+            
+            # 統合テスト実行
+            test_session = test_manager.run_comprehensive_test(test_folder_id, sample_size)
+            
+            # テストレポート生成
+            test_report = test_manager.generate_test_report(test_session)
+            
+            # 結果表示
+            display_integration_test_results(test_session, test_report)
+            
+        except Exception as e:
+            st.error(f"統合テスト実行エラー: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+
+def display_integration_test_results(test_session: Dict[str, Any], test_report: Dict[str, Any]):
+    """統合テスト結果を表示"""
+    st.success("🎉 統合テスト完了！")
+    
+    # サマリー表示
+    summary = test_report["summary"]
+    st.markdown("### 📊 テスト結果サマリー")
+    
+    col_sum1, col_sum2, col_sum3, col_sum4 = st.columns(4)
+    
+    with col_sum1:
+        st.metric(
+            "テスト対象PDF数", 
+            summary["total_pdfs_tested"],
+            help="実際にテストしたPDFファイルの数"
+        )
+    
+    with col_sum2:
+        st.metric(
+            "総合成功率", 
+            f"{summary['overall_success_rate']:.1%}",
+            help="全テスト項目の平均成功率"
+        )
+    
+    with col_sum3:
+        st.metric(
+            "品質レベル", 
+            summary["quality_level"],
+            help="総合的な品質評価"
+        )
+    
+    with col_sum4:
+        st.metric(
+            "パフォーマンス", 
+            summary["performance_status"],
+            help="処理速度の評価"
+        )
+    
+    # 詳細結果
+    st.markdown("### 🔍 詳細テスト結果")
+    
+    tab_extraction, tab_keyinfo, tab_company, tab_integrated = st.tabs([
+        "📄 PDF抽出", "🔑 キー情報", "🏢 企業名照合", "🔄 統合照合"
+    ])
+    
+    tests = test_session["tests"]
+    
+    with tab_extraction:
+        st.markdown("#### PDF情報抽出結果")
+        extraction_data = tests["pdf_extraction"]
+        
+        col_e1, col_e2 = st.columns(2)
+        with col_e1:
+            st.metric("成功率", f"{extraction_data['success_rate']:.1%}")
+        with col_e2:
+            st.metric("平均処理時間", f"{extraction_data['avg_time']:.1f}秒")
+        
+        # 個別結果
+        if extraction_data["results"]:
+            df_extraction = pd.DataFrame([
+                {
+                    "ファイル名": r.get("filename", ""),
+                    "成功": "✅" if r.get("success") else "❌",
+                    "処理時間": f"{r.get('extraction_time', 0):.1f}秒",
+                    "データ完全性": f"{r.get('data_completeness', 0):.1%}"
+                }
+                for r in extraction_data["results"]
+            ])
+            st.dataframe(df_extraction, use_container_width=True)
+    
+    with tab_keyinfo:
+        st.markdown("#### キー情報抽出結果")
+        keyinfo_data = tests["key_info_extraction"]
+        
+        st.metric("平均精度", f"{keyinfo_data['accuracy_rate']:.1%}")
+        
+        if keyinfo_data["results"]:
+            df_keyinfo = pd.DataFrame([
+                {
+                    "精度": f"{r.get('accuracy', 0):.1%}",
+                    "抽出キー数": r.get('key_count', 0),
+                    "重要キー発見数": f"{r.get('priority_keys_found', 0)}/{r.get('total_priority_keys', 0)}",
+                    "スコア": f"{r.get('score', 0):.1f}"
+                }
+                for r in keyinfo_data["results"]
+            ])
+            st.dataframe(df_keyinfo, use_container_width=True)
+    
+    with tab_company:
+        st.markdown("#### 企業名照合結果")
+        company_data = tests["company_matching"]
+        
+        st.metric("照合精度", f"{company_data['precision']:.1%}")
+        
+        if company_data["results"]:
+            df_company = pd.DataFrame([
+                {
+                    "元企業名": r.get('original_name', ''),
+                    "照合結果": "✅" if r.get('success') else "❌",
+                    "確信度": f"{r.get('confidence', 0):.1%}",
+                    "照合先": r.get('matched_company', 'なし')
+                }
+                for r in company_data["results"]
+            ])
+            st.dataframe(df_company, use_container_width=True)
+    
+    with tab_integrated:
+        st.markdown("#### 統合照合結果")
+        integrated_data = tests["integrated_matching"]
+        
+        st.metric("成功率", f"{integrated_data['success_rate']:.1%}")
+        
+        if integrated_data["results"]:
+            df_integrated = pd.DataFrame([
+                {
+                    "照合結果": "✅" if r.get('success') else "❌",
+                    "確信度": f"{r.get('confidence', 0):.1%}",
+                    "照合エントリ": r.get('matched_entry', 'なし')
+                }
+                for r in integrated_data["results"]
+            ])
+            st.dataframe(df_integrated, use_container_width=True)
+    
+    # ベースライン比較
+    st.markdown("### 📈 ベースライン比較")
+    
+    baseline_comparison = test_report["baseline_comparison"]
+    
+    comparison_data = []
+    for metric_name, comparison in baseline_comparison.items():
+        comparison_data.append({
+            "指標": metric_name.replace("_", " ").title(),
+            "現在値": f"{comparison['current']:.1%}",
+            "目標値": f"{comparison['target']:.1%}",
+            "達成率": f"{comparison['achievement_rate']:.1%}",
+            "ステータス": comparison['status']
+        })
+    
+    df_comparison = pd.DataFrame(comparison_data)
+    st.dataframe(df_comparison, use_container_width=True)
+    
+    # 推奨事項
+    st.markdown("### 💡 改善提案")
+    recommendations = test_report["recommendations"]
+    
+    if recommendations:
+        for recommendation in recommendations:
+            st.info(recommendation)
+    else:
+        st.success("🎯 すべての指標が良好です！継続的な監視を推奨します。")
+    
+    # 次のステップ
+    st.markdown("### 🚀 次のステップ")
+    next_steps = test_report["next_steps"]
+    
+    for step in next_steps:
+        st.markdown(f"- {step}")
+    
+    # ダウンロード機能
+    st.markdown("### 📥 レポートダウンロード")
+    
+    col_dl1, col_dl2 = st.columns(2)
+    
+    with col_dl1:
+        # JSONレポートダウンロード
+        json_report = json.dumps(test_report, ensure_ascii=False, indent=2)
+        st.download_button(
+            label="📄 詳細レポート（JSON）",
+            data=json_report,
+            file_name=f"integration_test_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            mime="application/json",
+            use_container_width=True
+        )
+    
+    with col_dl2:
+        # CSVサマリーダウンロード
+        summary_csv = pd.DataFrame([summary]).to_csv(index=False)
+        st.download_button(
+            label="📊 サマリー（CSV）",
+            data=summary_csv,
+            file_name=f"integration_test_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
 
 
 def render_google_drive_test_page():

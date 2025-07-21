@@ -26,7 +26,7 @@ class InvoiceMatcherService:
     
     def match_company_name(self, issuer_name: str, master_company_list: List[str]) -> Optional[Dict[str, Any]]:
         """
-        企業名照合機能（master_matcher）
+        企業名照合機能（master_matcher）- 強化版対応
         
         Args:
             issuer_name: 請求書の請求元名
@@ -37,6 +37,16 @@ class InvoiceMatcherService:
         """
         try:
             logger.info(f"企業名照合開始: {issuer_name} vs {len(master_company_list)}件のマスタ")
+            
+            # 1. 強化版照合（辞書ベース）を最初に試行
+            enhanced_result = self._try_enhanced_matching(issuer_name, master_company_list)
+            
+            if enhanced_result and enhanced_result.get("confidence_score", 0) >= 0.85:
+                logger.info("強化版照合成功")
+                return enhanced_result
+            
+            # 2. 従来のプロンプトベース照合にフォールバック
+            logger.info("強化版照合失敗、プロンプトベース照合にフォールバック")
             
             # プロンプト生成
             variables = {
@@ -51,24 +61,53 @@ class InvoiceMatcherService:
             
             if not response:
                 logger.error("企業名照合: Gemini APIからの応答がありません")
-                return None
+                return enhanced_result  # 強化版の結果を返す（確信度が低くても）
             
             # JSONレスポンスをパース
             try:
                 result = json.loads(response)
-                logger.info(f"企業名照合完了: {result.get('matched_company_name', 'null')}")
-                return result
+                
+                matched_name = result.get("matched_company_name")
+                confidence = result.get("confidence_score", 0)
+                
+                if matched_name and confidence >= 0.85:
+                    logger.info(f"プロンプトベース照合成功: {matched_name} (確信度: {confidence:.2f})")
+                    return result
+                else:
+                    logger.warning(f"プロンプトベース照合失敗: 確信度不足 ({confidence:.2f})")
+                    # 強化版の結果の方が良い場合はそれを返す
+                    if enhanced_result and enhanced_result.get("confidence_score", 0) > confidence:
+                        logger.info("強化版の結果を採用")
+                        return enhanced_result
+                    return result
                 
             except json.JSONDecodeError as e:
                 logger.error(f"企業名照合: JSON解析エラー: {e}")
                 logger.error(f"Raw response: {response}")
-                return None
+                return enhanced_result  # 強化版の結果を返す
                 
         except PromptValidationError as e:
             logger.error(f"企業名照合: プロンプト検証エラー: {e}")
-            return None
+            return enhanced_result if 'enhanced_result' in locals() else None
         except Exception as e:
             logger.error(f"企業名照合: 予期しないエラー: {e}")
+            return enhanced_result if 'enhanced_result' in locals() else None
+    
+    def _try_enhanced_matching(self, issuer_name: str, master_company_list: List[str]) -> Optional[Dict[str, Any]]:
+        """強化版照合を試行"""
+        try:
+            from utils.company_name_normalizer import get_company_normalizer
+            
+            normalizer = get_company_normalizer()
+            result = normalizer.enhanced_company_matching(issuer_name, master_company_list)
+            
+            if result:
+                logger.info(f"強化版照合結果: {result.get('matched_company_name')} (確信度: {result.get('confidence_score', 0):.2f})")
+            
+            return result
+            
+        except Exception as e:
+            logger.warning(f"強化版照合エラー: {e}")
             return None
     
     def match_integrated_invoice(self, invoice_data: Dict[str, Any], 
