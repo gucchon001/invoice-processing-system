@@ -19,6 +19,20 @@
       "example": ["Google合同会社", "アマゾン ウェブ サービス ジャパン合同会社", "マイクロソフト株式会社"]
     }
   },
+  "variables": {
+    "issuer_name": {
+      "type": "string",
+      "description": "請求書に記載された請求元名",
+      "required": true,
+      "example": "グーグル合同会社"
+    },
+    "master_company_list": {
+      "type": "string",
+      "description": "支払マスタの企業名リスト（JSON配列文字列）",
+      "required": true,
+      "example": "[\"Google合同会社\", \"アマゾン ウェブ サービス ジャパン合同会社\", \"マイクロソフト株式会社\"]"
+    }
+  },
   "test_cases": [
     {
       "name": "完全一致",

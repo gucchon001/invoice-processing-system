@@ -1,0 +1,29 @@
+[server]
+# ファイル監視の設定
+runOnSave = true
+port = 8701
+
+# ファイル監視の除外パターン（watchdogが監視対象外とするパターン）
+watcherType = "watchdog"
+
+[client]
+# UIの設定
+showErrorDetails = true
+toolbarMode = "auto"
+
+[theme]
+# テーマ設定
+primaryColor = "#FF6B6B"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#262730"
+
+[browser]
+# ブラウザ設定
+gatherUsageStats = false
+serverAddress = "localhost"
+
+[logger]
+# ログ設定の詳細
+level = "info"
+messageFormat = "%(asctime)s %(message)s" 

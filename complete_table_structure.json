@@ -1,0 +1,175 @@
+{
+  "total_columns": 28,
+  "all_columns": [
+    "id",
+    "user_email",
+    "status",
+    "file_name",
+    "uploaded_at",
+    "issuer_name",
+    "recipient_name",
+    "invoice_number",
+    "registration_number",
+    "currency",
+    "total_amount_tax_included",
+    "total_amount_tax_excluded",
+    "issue_date",
+    "due_date",
+    "key_info",
+    "raw_response",
+    "extracted_data",
+    "is_valid",
+    "validation_errors",
+    "validation_warnings",
+    "completeness_score",
+    "processing_time",
+    "gdrive_file_id",
+    "file_path",
+    "file_size",
+    "gemini_model",
+    "created_at",
+    "updated_at"
+  ],
+  "column_details": {
+    "id": {
+      "type": "int",
+      "sample_value": 1,
+      "category": "basic"
+    },
+    "user_email": {
+      "type": "str",
+      "sample_value": "test@example.com",
+      "category": "basic"
+    },
+    "status": {
+      "type": "str",
+      "sample_value": "extracted",
+      "category": "basic"
+    },
+    "file_name": {
+      "type": "str",
+      "sample_value": "test_local.pdf",
+      "category": "basic"
+    },
+    "uploaded_at": {
+      "type": "str",
+      "sample_value": "2025-07-21T12:30:57.390378+00:00",
+      "category": "basic"
+    },
+    "issuer_name": {
+      "type": "NoneType",
+      "sample_value": null,
+      "category": "invoice_info"
+    },
+    "recipient_name": {
+      "type": "NoneType",
+      "sample_value": null,
+      "category": "invoice_info"
+    },
+    "invoice_number": {
+      "type": "NoneType",
+      "sample_value": null,
+      "category": "invoice_info"
+    },
+    "registration_number": {
+      "type": "NoneType",
+      "sample_value": null,
+      "category": "invoice_info"
+    },
+    "currency": {
+      "type": "str",
+      "sample_value": "JPY",
+      "category": "invoice_info"
+    },
+    "total_amount_tax_included": {
+      "type": "NoneType",
+      "sample_value": null,
+      "category": "amount"
+    },
+    "total_amount_tax_excluded": {
+      "type": "NoneType",
+      "sample_value": null,
+      "category": "amount"
+    },
+    "issue_date": {
+      "type": "NoneType",
+      "sample_value": null,
+      "category": "date"
+    },
+    "due_date": {
+      "type": "NoneType",
+      "sample_value": null,
+      "category": "date"
+    },
+    "key_info": {
+      "type": "NoneType",
+      "sample_value": null,
+      "category": "json"
+    },
+    "raw_response": {
+      "type": "NoneType",
+      "sample_value": null,
+      "category": "json"
+    },
+    "extracted_data": {
+      "type": "NoneType",
+      "sample_value": null,
+      "category": "json"
+    },
+    "is_valid": {
+      "type": "bool",
+      "sample_value": true,
+      "category": "validation"
+    },
+    "validation_errors": {
+      "type": "NoneType",
+      "sample_value": null,
+      "category": "validation"
+    },
+    "validation_warnings": {
+      "type": "NoneType",
+      "sample_value": null,
+      "category": "validation"
+    },
+    "completeness_score": {
+      "type": "NoneType",
+      "sample_value": null,
+      "category": "validation"
+    },
+    "processing_time": {
+      "type": "NoneType",
+      "sample_value": null,
+      "category": "meta"
+    },
+    "gdrive_file_id": {
+      "type": "NoneType",
+      "sample_value": null,
+      "category": "meta"
+    },
+    "file_path": {
+      "type": "NoneType",
+      "sample_value": null,
+      "category": "meta"
+    },
+    "file_size": {
+      "type": "NoneType",
+      "sample_value": null,
+      "category": "meta"
+    },
+    "gemini_model": {
+      "type": "str",
+      "sample_value": "gemini-2.0-flash-exp",
+      "category": "meta"
+    },
+    "created_at": {
+      "type": "str",
+      "sample_value": "2025-07-22T09:46:32.099937+00:00",
+      "category": "basic"
+    },
+    "updated_at": {
+      "type": "str",
+      "sample_value": "2025-07-22T09:46:32.099937+00:00",
+      "category": "basic"
+    }
+  }
+}

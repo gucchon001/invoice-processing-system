@@ -164,8 +164,8 @@ class PromptManager:
             if var_name in variables_spec:
                 expected_type = variables_spec[var_name].get("type", "string")
                 if not self._validate_variable_type(value, expected_type):
-                    error_msg = f"変数 '{var_name}' の型が不正です。期待型: {expected_type}"
-                    logger.warning(error_msg)
+                    error_msg = f"変数 '{var_name}' の型が不正です。期待型: {expected_type}, 実際の型: {type(value).__name__}"
+                    logger.debug(error_msg)  # WARNING → DEBUG に変更（非致命的エラー）
         
         logger.debug(f"入力検証成功: {prompt_name}")
         return True
@@ -264,16 +264,27 @@ class PromptManager:
     
     def _substitute_variables(self, template: str, variables: Dict[str, Any], prompt_data: dict) -> str:
         """変数置換処理"""
+        import json
         result = template
+        variables_spec = prompt_data.get("variables", {})
         
         # 基本変数置換（{variable_name} 形式）
         for var_name, var_value in variables.items():
             placeholder = f"{{{var_name}}}"
             if placeholder in result:
-                result = result.replace(placeholder, str(var_value))
+                # 変数仕様を確認して適切な形式に変換
+                var_spec = variables_spec.get(var_name, {})
+                expected_type = var_spec.get("type", "string")
+                
+                if expected_type == "string" and isinstance(var_value, (list, dict)):
+                    # 配列や辞書の場合は JSON 文字列に変換
+                    formatted_value = json.dumps(var_value, ensure_ascii=False)
+                else:
+                    formatted_value = str(var_value)
+                
+                result = result.replace(placeholder, formatted_value)
         
         # デフォルト値の適用
-        variables_spec = prompt_data.get("variables", {})
         for var_name, var_spec in variables_spec.items():
             placeholder = f"{{{var_name}}}"
             if placeholder in result and var_name not in variables:

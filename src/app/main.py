@@ -14,6 +14,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any
 import json
+import time
 
 # プロジェクトルートをPythonパスに追加（新しい構造対応）
 project_root = Path(__file__).parent.parent  # src/ ディレクトリ
@@ -171,10 +172,22 @@ def render_upload_page():
             else:
                 st.warning("現在処理中です。しばらくお待ちください。")
 
-        # 処理中の進捗表示
+        # 処理中の進捗表示（シンプル版）
         if st.session_state.is_processing_upload:
             st.markdown("### 📊 処理進捗")
-            render_upload_progress()
+            st.info("🔄 ファイル処理中です... 完了まで少々お待ちください")
+            
+            # 進捗情報があれば表示（リアルタイム更新なし）
+            if st.session_state.upload_progress:
+                latest = st.session_state.upload_progress[-1]
+                step = latest.get('step', '')
+                progress = latest.get('progress_percent', 0)
+                st.progress(progress / 100, text=f"{step} ({progress}%)")
+        else:
+            # 処理完了後の詳細進捗表示
+            if st.session_state.upload_progress:
+                st.markdown("### 📊 処理進捗")
+                render_upload_progress()
 
         # 処理結果表示
         if st.session_state.upload_results and not st.session_state.is_processing_upload:
@@ -250,8 +263,74 @@ def render_invoice_aggrid(invoices_data):
         st.error(f"データ表示でエラーが発生しました: {e}")
 
 
+def _extract_invoice_data(row: dict, field_name: str, default_value=''):
+    """请求書データを複数ソースから抽出するヘルパー（extracted_data優先）"""
+    try:
+        import json
+        import re
+        
+        # 1. extracted_dataカラムから抽出（最優先）
+        if 'extracted_data' in row and row['extracted_data']:
+            extracted = row['extracted_data']
+            
+            # フィールドマッピング：UIフィールド名 -> extracted_dataのキー名
+            field_mapping = {
+                'issuer_name': 'issuer',
+                'payer_name': 'payer', 
+                'invoice_number': 'main_invoice_number',
+                'total_amount_tax_included': 'amount_inclusive_tax',
+                'total_amount': 'amount_inclusive_tax',
+                'currency': 'currency',
+                'issue_date': 'issue_date',
+                'due_date': 'due_date',
+                'registration_number': 't_number'
+            }
+            
+            key = field_mapping.get(field_name, field_name)
+            if key in extracted:
+                value = extracted[key]
+                # 値が存在し、空でない場合は返す
+                if value is not None and value != '' and value != 'N/A':
+                    return value
+        
+        # 2. statusフィールドから抽出（フォールバック）
+        status_str = row.get('status', '')
+        
+        # JSONフォーマットの場合
+        if status_str and (status_str.startswith('{') or 'ai_extracted_data' in status_str):
+            status_data = json.loads(status_str)
+            if 'ai_extracted_data' in status_data:
+                value = status_data['ai_extracted_data'].get(field_name, default_value)
+                if value is not None and value != '' and value != 'N/A':
+                    return value
+        
+        # コンパクト形式の場合（例: "✅Gamma ¥313"）
+        elif status_str and status_str.startswith('✅'):
+            if field_name in ['issuer_name', 'issuer']:
+                # ✅の後から¥の前までを企業名として抽出
+                match = re.search(r'✅([^¥]+)', status_str)
+                if match:
+                    return match.group(1).strip()
+            elif field_name in ['total_amount_tax_included', 'total_amount']:
+                # ¥の後の数字を金額として抽出
+                match = re.search(r'¥([\d,]+)', status_str)
+                if match:
+                    return int(match.group(1).replace(',', ''))
+            elif field_name == 'currency':
+                # ¥が含まれていればJPY
+                if '¥' in status_str:
+                    return 'JPY'
+        
+        # 3. 直接カラムから抽出（レガシー対応）
+        if field_name in row and row[field_name] is not None and row[field_name] != '':
+            return row[field_name]
+        
+        return default_value
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return default_value
+
 def prepare_invoice_data_for_aggrid(invoices_data):
-    """請求書データをag-grid用に前処理"""
+    """請求書データをag-grid用に前処理（完全28カラム対応）"""
     try:
         import pandas as pd
         
@@ -259,49 +338,88 @@ def prepare_invoice_data_for_aggrid(invoices_data):
         processed_rows = []
         
         for invoice in invoices_data:
-            # 抽出データから主要項目を取得
+            # フォールバック用のextracted_data
             extracted_data = invoice.get('extracted_data', {}) or {}
             
+            # 完全な28カラム構造のデータ準備
             row = {
+                # 1-7: 基本情報カラム
                 'id': invoice.get('id', ''),
+                'user_email': invoice.get('user_email', ''),
+                'status': invoice.get('status', 'extracted'),
                 'file_name': invoice.get('file_name', ''),
-                'supplier_name': (
-                    invoice.get('supplier_name') or 
-                    extracted_data.get('supplier_name') or 
-                    extracted_data.get('issuer', '')
+                'uploaded_at': invoice.get('uploaded_at', ''),
+                'created_at': invoice.get('created_at', ''),
+                'updated_at': invoice.get('updated_at', ''),
+                
+                # 8-12: 請求書基本情報カラム
+                'issuer_name': (
+                    invoice.get('issuer_name') or
+                    extracted_data.get('issuer') or
+                    'N/A'
+                ),
+                'recipient_name': (
+                    invoice.get('recipient_name') or
+                    extracted_data.get('payer') or
+                    'N/A'
                 ),
                 'invoice_number': (
                     invoice.get('invoice_number') or
-                    extracted_data.get('invoice_number') or
-                    extracted_data.get('main_invoice_number', '')
+                    extracted_data.get('main_invoice_number') or
+                    'N/A'
                 ),
-                'invoice_date': (
-                    invoice.get('invoice_date') or
-                    extracted_data.get('invoice_date') or
-                    extracted_data.get('issue_date', '')
-                ),
-                'due_date': (
-                    invoice.get('due_date') or
-                    extracted_data.get('due_date', '')
-                ),
-                'total_amount': (
-                    invoice.get('total_amount') or
-                    extracted_data.get('total_amount') or
-                    extracted_data.get('amount_inclusive_tax', 0)
-                ),
-                'tax_amount': (
-                    invoice.get('tax_amount') or
-                    extracted_data.get('tax_amount', 0)
+                'registration_number': (
+                    invoice.get('registration_number') or
+                    extracted_data.get('t_number') or
+                    'N/A'
                 ),
                 'currency': (
                     invoice.get('currency') or
-                    extracted_data.get('currency', 'JPY')
+                    extracted_data.get('currency') or
+                    'JPY'
                 ),
-                'status': invoice.get('status', 'extracted'),
-                'created_at': invoice.get('created_at', ''),
-                'user_email': invoice.get('user_email', ''),
+                
+                # 13-14: 金額情報カラム
+                'total_amount_tax_included': (
+                    invoice.get('total_amount_tax_included') or
+                    extracted_data.get('amount_inclusive_tax') or
+                    0
+                ),
+                'total_amount_tax_excluded': (
+                    invoice.get('total_amount_tax_excluded') or
+                    extracted_data.get('amount_exclusive_tax') or
+                    0
+                ),
+                
+                # 15-16: 日付情報カラム
+                'issue_date': (
+                    invoice.get('issue_date') or
+                    extracted_data.get('issue_date') or
+                    'N/A'
+                ),
+                'due_date': (
+                    invoice.get('due_date') or
+                    extracted_data.get('due_date') or
+                    'N/A'
+                ),
+                
+                # 17-19: JSON情報カラム
+                'key_info': invoice.get('key_info', {}),
+                'raw_response': invoice.get('raw_response', {}),
+                'extracted_data': invoice.get('extracted_data', {}),
+                
+                # 20-23: 検証・品質管理カラム
+                'is_valid': invoice.get('is_valid', True),
+                'validation_errors': invoice.get('validation_errors', []),
+                'validation_warnings': invoice.get('validation_warnings', []),
+                'completeness_score': invoice.get('completeness_score', 0),
+                
+                # 24-28: メタデータカラム
+                'processing_time': invoice.get('processing_time', 0),
+                'gdrive_file_id': invoice.get('gdrive_file_id', ''),
                 'file_path': invoice.get('file_path', ''),
-                'gdrive_file_id': invoice.get('gdrive_file_id', '')
+                'file_size': invoice.get('file_size', 0),
+                'gemini_model': invoice.get('gemini_model', 'gemini-2.0-flash-exp')
             }
             
             processed_rows.append(row)
@@ -309,20 +427,66 @@ def prepare_invoice_data_for_aggrid(invoices_data):
         # DataFrameに変換
         df = pd.DataFrame(processed_rows)
         
-        # 日時フォーマット調整
-        if 'created_at' in df.columns:
-            df['created_at'] = pd.to_datetime(df['created_at']).dt.strftime('%Y-%m-%d %H:%M')
+        # データ型の統一と調整（完全28カラム対応）
+        if len(df) > 0:
+            # 日時フォーマット調整
+            date_columns = ['uploaded_at', 'created_at', 'updated_at', 'issue_date', 'due_date']
+            for col in date_columns:
+                if col in df.columns:
+                    try:
+                        # 日付のみの場合とタイムスタンプの場合を区別
+                        if col in ['issue_date', 'due_date']:
+                            # 日付のみの場合
+                            df[col] = pd.to_datetime(df[col], errors='coerce').dt.strftime('%Y-%m-%d')
+                        else:
+                            # タイムスタンプの場合
+                            df[col] = pd.to_datetime(df[col], errors='coerce').dt.strftime('%Y-%m-%d %H:%M')
+                    except:
+                        df[col] = df[col].astype(str).replace('nan', '').replace('None', '')
+            
+            # 数値型の変換
+            numeric_columns = [
+                'total_amount_tax_included', 'total_amount_tax_excluded', 
+                'completeness_score', 'processing_time', 'file_size'
+            ]
+            for col in numeric_columns:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            
+            # ブール型の統一
+            if 'is_valid' in df.columns:
+                df['is_valid'] = df['is_valid'].fillna(True)
+            
+            # 文字列カラムの統一
+            string_columns = [
+                'user_email', 'status', 'file_name', 'issuer_name', 
+                'recipient_name', 'invoice_number', 'registration_number', 
+                'currency', 'gdrive_file_id', 'file_path', 'gemini_model'
+            ]
+            for col in string_columns:
+                if col in df.columns:
+                    df[col] = df[col].astype(str).replace('nan', 'N/A').replace('None', 'N/A')
+            
+            # リスト型カラムの統一
+            list_columns = ['validation_errors', 'validation_warnings']
+            for col in list_columns:
+                if col in df.columns:
+                    df[col] = df[col].apply(lambda x: x if isinstance(x, list) else [])
+            
+            # JSON型カラムの統一
+            json_columns = ['key_info', 'raw_response', 'extracted_data']
+            for col in json_columns:
+                if col in df.columns:
+                    df[col] = df[col].apply(lambda x: x if isinstance(x, dict) else {})
         
-        # 数値型の変換
-        numeric_columns = ['total_amount', 'tax_amount']
-        for col in numeric_columns:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        
+        logger.info(f"📊 ag-grid用データ準備完了: {len(df)}件（完全28カラム対応）")
+        if len(df) > 0:
+            logger.debug(f"🔧 カラム数: {len(df.columns)}")
+            logger.debug(f"🔧 主要カラム値例: issuer_name={df['issuer_name'].iloc[0]}")
         return df
         
     except Exception as e:
-        logger.error(f"データ前処理エラー: {e}")
+        logger.error(f"❌ ag-grid用データ準備エラー: {e}")
         return pd.DataFrame()
 
 
@@ -1911,15 +2075,15 @@ def render_workflow_result():
             
             with col1:
                 st.write("**📊 基本情報**")
-                st.write(f"• 供給者名: {extracted_data.get('supplier_name', 'N/A')}")
-                st.write(f"• 請求書番号: {extracted_data.get('invoice_number', 'N/A')}")
+                st.write(f"• 供給者名: {extracted_data.get('issuer', 'N/A')}")
+                st.write(f"• 請求書番号: {extracted_data.get('main_invoice_number', 'N/A')}")
                 st.write(f"• 通貨: {extracted_data.get('currency', 'JPY')}")
             
             with col2:
                 st.write("**💰 金額情報**")
-                st.write(f"• 合計金額: ¥{extracted_data.get('total_amount', 0):,}")
-                st.write(f"• 税額: ¥{extracted_data.get('tax_amount', 0):,}")
-                st.write(f"• 請求日: {extracted_data.get('invoice_date', 'N/A')}")
+                st.write(f"• 合計金額: ¥{extracted_data.get('amount_inclusive_tax', 0):,}")
+                st.write(f"• 税額: ¥{(extracted_data.get('amount_inclusive_tax', 0) - extracted_data.get('amount_exclusive_tax', 0)):,}")
+                st.write(f"• 請求日: {extracted_data.get('issue_date', 'N/A')}")
             
             # 詳細データ（JSON）
             with st.expander("🔍 抽出データ詳細（JSON）", expanded=False):
@@ -2024,8 +2188,23 @@ def execute_multiple_invoice_processing(uploaded_files, user_id):
             'timestamp': progress.timestamp.strftime("%H:%M:%S"),
             'details': progress.details
         })
-        # リアルタイム更新
-        st.rerun()
+        
+        # 🔄 進捗表示の適切な更新ロジック
+        logger.info(f"進捗通知: {progress.step} ({progress.progress_percent}%)")
+        
+        # 処理完了・失敗時は最終更新のみ実行
+        if progress.status.value in ['completed', 'failed']:
+            logger.info(f"進捗通知: {progress.step} - 最終更新実行")
+            try:
+                if st.session_state.is_processing_upload:
+                    st.rerun()
+            except Exception as e:
+                logger.warning(f"最終進捗更新エラー: {e}")
+            return
+        
+        # 🚨 完全修正：中間進捗更新を完全無効化（無限ループ防止）
+        logger.info(f"進捗ログのみ記録: {progress.progress_percent}% - リアルタイム更新は無効化")
+        logger.debug(f"進捗更新: {progress.step} - {progress.message}")
     
     try:
         # サービスの初期化
@@ -2035,9 +2214,35 @@ def execute_multiple_invoice_processing(uploaded_files, user_id):
         
         total_files = len(uploaded_files)
         
+        # 処理開始の通知
+        st.session_state.upload_progress.append({
+            'file_index': 0,
+            'filename': '処理開始',
+            'status': 'processing',
+            'step': '初期化',
+            'progress_percent': 0,
+            'overall_progress': 0,
+            'message': f'{total_files}件のファイル処理を開始します',
+            'timestamp': datetime.now().strftime("%H:%M:%S"),
+            'details': {'total_files': total_files}
+        })
+        
         # 各ファイルを順次処理
         for file_index, uploaded_file in enumerate(uploaded_files):
             try:
+                # ファイル処理開始の通知
+                st.session_state.upload_progress.append({
+                    'file_index': file_index,
+                    'filename': uploaded_file.name,
+                    'status': 'processing',
+                    'step': 'ファイル処理開始',
+                    'progress_percent': 0,
+                    'overall_progress': (file_index * 100) / total_files,
+                    'message': f'{uploaded_file.name}の処理を開始',
+                    'timestamp': datetime.now().strftime("%H:%M:%S"),
+                    'details': {'file_size': uploaded_file.size}
+                })
+                
                 # ファイル固有の進捗コールバック（変数キャプチャ対応）
                 file_progress_callback = lambda progress, idx=file_index: progress_callback(progress, idx, total_files)
                 
@@ -2067,6 +2272,20 @@ def execute_multiple_invoice_processing(uploaded_files, user_id):
                     'processing_time': result.processing_time
                 })
                 
+                # ファイル完了の通知
+                success_icon = "✅" if result.success else "❌"
+                st.session_state.upload_progress.append({
+                    'file_index': file_index,
+                    'filename': uploaded_file.name,
+                    'status': 'completed' if result.success else 'failed',
+                    'step': 'ファイル処理完了',
+                    'progress_percent': 100,
+                    'overall_progress': ((file_index + 1) * 100) / total_files,
+                    'message': f'{success_icon} {uploaded_file.name}の処理完了',
+                    'timestamp': datetime.now().strftime("%H:%M:%S"),
+                    'details': {'success': result.success, 'processing_time': result.processing_time}
+                })
+                
                 logger.info(f"ファイル処理完了: {filename} (成功: {result.success})")
                 
             except Exception as e:
@@ -2076,15 +2295,65 @@ def execute_multiple_invoice_processing(uploaded_files, user_id):
                     'success': False,
                     'error_message': f"ファイル処理エラー: {str(e)}"
                 })
+                
+                # エラーの通知
+                st.session_state.upload_progress.append({
+                    'file_index': file_index,
+                    'filename': uploaded_file.name,
+                    'status': 'failed',
+                    'step': 'エラー発生',
+                    'progress_percent': 0,
+                    'overall_progress': ((file_index + 1) * 100) / total_files,
+                    'message': f'❌ {uploaded_file.name}でエラー: {str(e)}',
+                    'timestamp': datetime.now().strftime("%H:%M:%S"),
+                    'details': {'error': str(e)}
+                })
+                
                 logger.error(f"ファイル処理エラー ({uploaded_file.name}): {e}")
+        
+        # 全体処理完了の通知
+        successful_count = len([r for r in st.session_state.upload_results if r.get('success', False)])
+        st.session_state.upload_progress.append({
+            'file_index': total_files,
+            'filename': '全体処理完了',
+            'status': 'completed',
+            'step': '処理完了',
+            'progress_percent': 100,
+            'overall_progress': 100,
+            'message': f'🎉 全体処理完了: {successful_count}/{total_files}件成功',
+            'timestamp': datetime.now().strftime("%H:%M:%S"),
+            'details': {'total_files': total_files, 'successful_count': successful_count}
+        })
         
     except Exception as e:
         # 全体エラー
         logger.error(f"複数ファイル処理でエラー: {e}")
         st.error(f"処理中にエラーが発生しました: {e}")
+        
+        # 全体エラーの通知
+        st.session_state.upload_progress.append({
+            'file_index': 0,
+            'filename': 'システムエラー',
+            'status': 'failed',
+            'step': 'システムエラー',
+            'progress_percent': 0,
+            'overall_progress': 0,
+            'message': f'❌ システムエラー: {str(e)}',
+            'timestamp': datetime.now().strftime("%H:%M:%S"),
+            'details': {'system_error': str(e)}
+        })
     
     finally:
         st.session_state.is_processing_upload = False
+        # 最終的な画面更新（条件付き）
+        if st.session_state.upload_results:  # 結果がある場合のみ更新
+            logger.info("処理完了 - 最終画面更新を実行")
+            try:
+                st.rerun()
+            except Exception as e:
+                logger.warning(f"最終更新エラー: {e}")
+        else:
+            logger.info("処理完了 - 結果が無いため画面更新をスキップ")
 
 
 def render_upload_progress():
@@ -2095,16 +2364,49 @@ def render_upload_progress():
         
         # 全体進捗バー
         overall_progress = latest_progress.get('overall_progress', 0)
-        st.progress(overall_progress / 100)
+        st.progress(overall_progress / 100, text=f"全体進捗: {overall_progress:.1f}%")
         
         # 現在のファイル処理状況
         current_file = latest_progress.get('filename', '')
         current_step = latest_progress.get('step', '')
         current_message = latest_progress.get('message', '')
+        current_status = latest_progress.get('status', '')
         
-        st.write(f"📄 **現在処理中:** {current_file}")
-        st.write(f"🔄 **ステップ:** {current_step}")
-        st.write(f"💬 **状況:** {current_message}")
+        # ステータス別アイコン
+        status_icons = {
+            'processing': '🔄',
+            'completed': '✅',
+            'failed': '❌',
+            'uploading': '📤',
+            'saving': '💾'
+        }
+        
+        status_icon = status_icons.get(current_status, '⏳')
+        
+        # カード形式で現在の状況を表示
+        with st.container():
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                st.markdown(f"### {status_icon}")
+            with col2:
+                st.markdown(f"**現在の処理:** {current_file}")
+                st.markdown(f"**ステップ:** {current_step}")
+                st.markdown(f"**状況:** {current_message}")
+        
+        # 処理統計
+        if len(st.session_state.upload_progress) > 1:
+            col1, col2, col3 = st.columns(3)
+            
+            processing_files = [p for p in st.session_state.upload_progress if p.get('status') == 'processing']
+            completed_files = [p for p in st.session_state.upload_progress if p.get('status') == 'completed']
+            failed_files = [p for p in st.session_state.upload_progress if p.get('status') == 'failed']
+            
+            with col1:
+                st.metric("処理中", len(processing_files))
+            with col2:
+                st.metric("完了", len(completed_files))
+            with col3:
+                st.metric("エラー", len(failed_files))
         
         # 詳細ログ表示（最新10件）
         with st.expander("📋 詳細ログ", expanded=False):
@@ -2114,7 +2416,30 @@ def render_upload_progress():
                 filename = log.get('filename', '')
                 step = log.get('step', '')
                 message = log.get('message', '')
-                st.text(f"[{timestamp}] {filename}: {step} - {message}")
+                status = log.get('status', '')
+                
+                # ログエントリのスタイル
+                status_color = {
+                    'completed': '🟢',
+                    'failed': '🔴',
+                    'processing': '🟡',
+                    'uploading': '🔵',
+                    'saving': '🟣'
+                }
+                
+                color_icon = status_color.get(status, '⚪')
+                st.markdown(f"{color_icon} **[{timestamp}]** {filename}: {step} - {message}")
+                
+                # 詳細情報があれば表示
+                details = log.get('details', {})
+                if details and isinstance(details, dict):
+                    with st.expander(f"詳細 - {filename}", expanded=False):
+                        st.json(details)
+        
+        # 🚨 自動更新完全無効化（無限ループ防止）
+        if st.session_state.is_processing_upload and current_status in ['processing', 'uploading', 'saving']:
+            st.markdown("🔄 **処理中... 完了まで少々お待ちください**")
+            st.info("進捗はログで確認できます。処理完了後に自動で結果が表示されます。")
 
 
 def render_ocr_test_page():
@@ -2171,14 +2496,14 @@ def render_upload_results():
                     col1, col2 = st.columns(2)
                     
                     with col1:
-                        st.write(f"• 供給者名: {extracted_data.get('supplier_name', 'N/A')}")
-                        st.write(f"• 請求書番号: {extracted_data.get('invoice_number', 'N/A')}")
+                        st.write(f"• 供給者名: {extracted_data.get('issuer', 'N/A')}")
+                        st.write(f"• 請求書番号: {extracted_data.get('main_invoice_number', 'N/A')}")
                         st.write(f"• 通貨: {extracted_data.get('currency', 'JPY')}")
                     
                     with col2:
-                        st.write(f"• 合計金額: ¥{extracted_data.get('total_amount', 0):,}")
-                        st.write(f"• 税額: ¥{extracted_data.get('tax_amount', 0):,}")
-                        st.write(f"• 請求日: {extracted_data.get('invoice_date', 'N/A')}")
+                        st.write(f"• 合計金額: ¥{extracted_data.get('amount_inclusive_tax', 0):,}")
+                        st.write(f"• 税額: ¥{(extracted_data.get('amount_inclusive_tax', 0) - extracted_data.get('amount_exclusive_tax', 0)):,}")
+                        st.write(f"• 請求日: {extracted_data.get('issue_date', 'N/A')}")
         else:
             with st.expander(f"❌ {filename} - 処理失敗", expanded=False):
                 error_message = result.get('error_message', '詳細不明')

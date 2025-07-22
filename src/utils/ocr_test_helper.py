@@ -110,7 +110,7 @@ class OCRTestManager:
             st.error(f"ファイルダウンロードエラー: {str(e)}")
             return None
     
-    def create_ocr_prompt(self) -> str:
+    def create_ocr_prompt(self, filename: str = "", file_size: int = 0) -> str:
         """OCR用のプロンプトを作成（JSON外出し対応）"""
         try:
             # プロンプトマネージャーを使用してJSON外出しプロンプト読み込み
@@ -118,15 +118,21 @@ class OCRTestManager:
             
             prompt_manager = get_prompt_manager()
             
-            # OCR抽出プロンプトの生成
+            # ファイル情報を作成
+            file_info = f"請求書PDFファイル: {filename}"
+            if file_size > 0:
+                file_info += f" (サイズ: {file_size:,} bytes)"
+            
+            # OCR抽出プロンプトの生成（実際のファイル情報を提供）
             ocr_prompt = prompt_manager.render_prompt(
                 "invoice_extractor_prompt",
                 {
-                    "extraction_mode": "comprehensive"
+                    "extraction_mode": "comprehensive",
+                    "invoice_image": file_info  # 実際のファイル情報を提供
                 }
             )
             
-            logger.info("JSONプロンプトを使用してOCRプロンプトを生成")
+            logger.info(f"JSONプロンプトを使用してOCRプロンプトを生成: {filename}")
             return ocr_prompt
             
         except Exception as e:
@@ -213,8 +219,9 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
             current_model = get_gemini_model()
             logger.info(f"{current_model}でOCR処理開始: {filename}")
             
-            # OCR用プロンプト作成
-            prompt = self.create_ocr_prompt()
+            # OCR用プロンプト作成（実際のファイル情報を渡す）
+            file_size = len(pdf_content)
+            prompt = self.create_ocr_prompt(filename, file_size)
             
             # Gemini APIで処理
             result = self.gemini_manager.analyze_pdf_content(pdf_content, prompt)
@@ -246,22 +253,22 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
             }
         }
         
-        # 1. 必須フィールドの詳細チェック
+        # 1. 必須フィールドの詳細チェック（JSONプロンプト対応）
         required_fields = {
-            "issuer_name": "請求元企業名",
-            "total_amount_tax_included": "税込金額", 
+            "issuer": "請求元企業名",                    # JSONプロンプト版
+            "amount_inclusive_tax": "税込金額",          # JSONプロンプト版
             "currency": "通貨"
         }
         
         important_fields = {
-            "recipient_name": "請求先企業名",
-            "invoice_number": "請求書番号",
+            "payer": "請求先企業名",                     # JSONプロンプト版
+            "main_invoice_number": "請求書番号",         # JSONプロンプト版
             "issue_date": "発行日"
         }
         
         optional_fields = {
-            "registration_number": "登録番号",
-            "total_amount_tax_excluded": "税抜金額",
+            "t_number": "登録番号",                      # JSONプロンプト版
+            "amount_exclusive_tax": "税抜金額",          # JSONプロンプト版
             "due_date": "支払期日",
             "line_items": "明細情報",
             "key_info": "キー情報"
@@ -332,8 +339,8 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
                 validation["warnings"].append(error_msg)
                 validation["error_categories"]["data_format"].append(error_msg)
         
-        # 金額データ型チェック
-        for amount_field in ["total_amount_tax_included", "total_amount_tax_excluded"]:
+        # 金額データ型チェック（JSONプロンプト対応）
+        for amount_field in ["amount_inclusive_tax", "amount_exclusive_tax"]:
             amount = result.get(amount_field)
             if amount is not None and not isinstance(amount, (int, float)):
                 try:
@@ -344,17 +351,17 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
                     validation["error_categories"]["data_format"].append(error_msg)
                     validation["is_valid"] = False
         
-        # 企業名の長さチェック
-        issuer_name = result.get("issuer_name")
-        if issuer_name and len(str(issuer_name)) > 100:
-            warning_msg = f"請求元企業名が長すぎます（{len(str(issuer_name))}文字）"
+        # 企業名の長さチェック（JSONプロンプト対応）
+        issuer = result.get("issuer")
+        if issuer and len(str(issuer)) > 100:
+            warning_msg = f"請求元企業名が長すぎます（{len(str(issuer))}文字）"
             validation["warnings"].append(warning_msg)
             validation["error_categories"]["data_format"].append(warning_msg)
     
     def _validate_amounts(self, result: Dict[str, Any], validation: Dict[str, Any]):
-        """金額検証（外貨取引対応）"""
-        tax_included = result.get("total_amount_tax_included")
-        tax_excluded = result.get("total_amount_tax_excluded")
+        """金額検証（外貨取引対応・JSONプロンプト対応）"""
+        tax_included = result.get("amount_inclusive_tax")
+        tax_excluded = result.get("amount_exclusive_tax")
         currency = result.get("currency", "JPY")
         
         # 外貨取引判定
@@ -478,9 +485,9 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
                 validation["error_categories"]["business_logic"].append(warning_msg)
     
     def _validate_foreign_currency(self, result: Dict[str, Any], validation: Dict[str, Any]):
-        """外貨取引チェック"""
+        """外貨取引チェック（JSONプロンプト対応）"""
         currency = result.get("currency")
-        issuer_name = result.get("issuer_name", "")
+        issuer = result.get("issuer", "")
         
         if currency and currency != "JPY":
             # 外貨取引の基本警告
@@ -490,7 +497,7 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
             
             # 海外事業者チェック（簡易判定）
             foreign_keywords = ["LLC", "Ltd", "Inc", "Corp", "GmbH", "Limited", "Ireland", "Singapore"]
-            if any(keyword in issuer_name for keyword in foreign_keywords):
+            if any(keyword in issuer for keyword in foreign_keywords):
                 warning_msg = "海外事業者のため消費税処理を確認してください"
                 validation["warnings"].append(warning_msg)
                 validation["error_categories"]["business_logic"].append(warning_msg)
@@ -518,8 +525,8 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
                         validation["warnings"].append(warning_msg)
                         validation["error_categories"]["data_format"].append(warning_msg)
             
-            # 請求金額との突合
-            invoice_total = result.get("total_amount_tax_excluded")
+            # 請求金額との突合（JSONプロンプト対応）
+            invoice_total = result.get("amount_exclusive_tax")
             if (invoice_total is not None and isinstance(invoice_total, (int, float)) and 
                 invoice_total > 0 and line_total > 0):
                 
@@ -537,17 +544,17 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
     def format_ocr_result_for_display(self, result: Dict[str, Any], validation: Dict[str, Any]) -> pd.DataFrame:
         """OCR結果を表示用データフレームに変換"""
         
-        # 基本情報
+        # 基本情報（JSONプロンプト対応）
         basic_info = []
         field_mapping = {
-            "issuer_name": "請求元企業名",
-            "recipient_name": "請求先企業名", 
+            "issuer": "請求元企業名",
+            "payer": "請求先企業名", 
             "receipt_number": "領収書番号",
-            "invoice_number": "請求書番号",
-            "registration_number": "登録番号",
+            "main_invoice_number": "請求書番号",
+            "t_number": "登録番号",
             "currency": "通貨",
-            "total_amount_tax_included": "税込金額",
-            "total_amount_tax_excluded": "税抜金額",
+            "amount_inclusive_tax": "税込金額",
+            "amount_exclusive_tax": "税抜金額",
             "issue_date": "発行日",
             "due_date": "支払期日",
             "key_info": "キー情報"
@@ -761,20 +768,20 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
                 ocr_result = result["ocr_result"]
                 validation = result["validation"]
                 
-                # 結果データを準備
+                # 結果データを準備（JSONプロンプト対応）
                 result_data = {
                     "session_id": session_id,
                     "file_id": result["file_id"],
                     "filename": result["filename"],
                     "file_size": result.get("file_size"),
-                    "issuer_name": ocr_result.get("issuer_name"),
-                    "recipient_name": ocr_result.get("recipient_name"),
+                    "issuer_name": ocr_result.get("issuer"),                    # JSONプロンプト版
+                    "recipient_name": ocr_result.get("payer"),                  # JSONプロンプト版
                     "receipt_number": ocr_result.get("receipt_number"),
-                    "invoice_number": ocr_result.get("invoice_number"),
-                    "registration_number": ocr_result.get("registration_number"),
+                    "invoice_number": ocr_result.get("main_invoice_number"),    # JSONプロンプト版
+                    "registration_number": ocr_result.get("t_number"),          # JSONプロンプト版
                     "currency": ocr_result.get("currency"),
-                    "total_amount_tax_included": ocr_result.get("total_amount_tax_included"),
-                    "total_amount_tax_excluded": ocr_result.get("total_amount_tax_excluded"),
+                    "total_amount_tax_included": ocr_result.get("amount_inclusive_tax"),  # JSONプロンプト版
+                    "total_amount_tax_excluded": ocr_result.get("amount_exclusive_tax"),  # JSONプロンプト版
                     "issue_date": ocr_result.get("issue_date"),
                     "due_date": ocr_result.get("due_date"),
                     "key_info": ocr_result.get("key_info"),
@@ -988,19 +995,19 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
             # 新しいOCRテスト結果の場合
             ocr_result = data_source.get("ocr_result", {})
             
-            # 基本フィールドを順序付きで表示
+            # 基本フィールドを順序付きで表示（JSONプロンプト対応）
             basic_fields = [
-                ("issuer_name", "請求元"),
-                ("recipient_name", "請求先"),
-                ("invoice_number", "請求書番号"),
-                ("total_amount_tax_included", "税込金額"),
+                ("issuer", "請求元"),
+                ("payer", "請求先"),
+                ("main_invoice_number", "請求書番号"),
+                ("amount_inclusive_tax", "税込金額"),
                 ("currency", "通貨"),
                 ("issue_date", "発行日")
             ]
             
             for field_key, field_label in basic_fields:
                 value = ocr_result.get(field_key, "")
-                if field_key == "total_amount_tax_included" and value:
+                if field_key == "amount_inclusive_tax" and value:
                     try:
                         amount = float(value)
                         st.write(f"• **{field_label}**: {amount:,.0f}円")
@@ -1336,10 +1343,10 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
             "retry_recommended": False
         }
         
-        # 必須フィールドの欠損分析
+        # 必須フィールドの欠損分析（JSONプロンプト対応）
         required_fields = {
-            "issuer_name": "請求元企業名",
-            "total_amount_tax_included": "税込金額", 
+            "issuer": "請求元企業名",
+            "amount_inclusive_tax": "税込金額", 
             "currency": "通貨"
         }
         
@@ -1390,14 +1397,14 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
         return analysis
     
     def _get_field_correction_suggestion(self, field: str, result: Dict[str, Any]) -> str:
-        """フィールド別の修正提案を生成"""
-        if field == "issuer_name":
+        """フィールド別の修正提案を生成（JSONプロンプト対応）"""
+        if field == "issuer":
             # 他のフィールドから推測可能な情報を確認
             if result.get("key_info", {}).get("payee"):
                 return f"key_info.payeeに '{result['key_info']['payee']}' があります。これを使用可能か確認"
             return "PDFから企業名を手動で確認し、プロンプトの企業名抽出指示を強化"
         
-        elif field == "total_amount_tax_included":
+        elif field == "amount_inclusive_tax":
             # 明細から推測可能か確認
             line_items = result.get("line_items", [])
             if not isinstance(line_items, list):
@@ -1407,8 +1414,8 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
             return "金額情報の抽出ルールを見直し、数値フォーマットの認識を改善"
         
         elif field == "currency":
-            # 他の金額フィールドから推測
-            if result.get("total_amount_tax_included") or result.get("total_amount_tax_excluded"):
+            # 他の金額フィールドから推測（JSONプロンプト対応）
+            if result.get("amount_inclusive_tax") or result.get("amount_exclusive_tax"):
                 return "金額は取得できているため、通貨はJPYと推定。自動補完ルールを追加"
             return "PDFから通貨表記を確認し、通貨コード抽出の指示を強化"
         
@@ -1484,8 +1491,8 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
                 else:
                     completeness_score = 0.0
                 
-                # 税込金額の安全な変換
-                tax_included = ocr_result.get("total_amount_tax_included", 0)
+                # 税込金額の安全な変換（JSONプロンプト対応）
+                tax_included = ocr_result.get("amount_inclusive_tax", 0)
                 if not isinstance(tax_included, (int, float)):
                     try:
                         tax_included = float(tax_included) if tax_included else 0
@@ -1506,9 +1513,9 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
                 
                 results_data.append({
                     "ファイル名": str(result["filename"]),
-                    "請求元": str(ocr_result.get("issuer_name", "")),
-                    "請求先": str(ocr_result.get("recipient_name", "")),
-                    "請求書番号": str(ocr_result.get("invoice_number", "")),
+                    "請求元": str(ocr_result.get("issuer", "")),                   # JSONプロンプト版
+                    "請求先": str(ocr_result.get("payer", "")),                    # JSONプロンプト版
+                    "請求書番号": str(ocr_result.get("main_invoice_number", "")),  # JSONプロンプト版
                     "通貨": str(ocr_result.get("currency", "")),
                     "税込金額": tax_included,
                     "発行日": str(ocr_result.get("issue_date", "")),
@@ -1685,8 +1692,8 @@ def display_session_history(ocr_test_manager: 'OCRTestManager', user_email: str)
                         
                         history_data.append({
                             "ファイル名": str(result["filename"]),
-                            "請求元": str(result["issuer_name"] or ""),
-                            "請求書番号": str(result["invoice_number"] or ""),
+                            "請求元": str(result["issuer_name"] or ""),      # DBフィールド名（変更なし）
+                            "請求書番号": str(result["invoice_number"] or ""), # DBフィールド名（変更なし）
                             "通貨": str(result["currency"] or ""),
                             "税込金額": int(tax_included),
                             "発行日": str(result["issue_date"]) if result["issue_date"] else "",
@@ -1784,10 +1791,10 @@ def display_session_history(ocr_test_manager: 'OCRTestManager', user_email: str)
                                         with col1:
                                             st.markdown("**欠損している可能性のあるフィールド:**")
                                             
-                                            # 必須フィールドチェック
+                                            # 必須フィールドチェック（JSONプロンプト対応）
                                             required_checks = [
-                                                ("請求元企業名", raw_response.get("issuer_name")),
-                                                ("税込金額", raw_response.get("total_amount_tax_included")),
+                                                ("請求元企業名", raw_response.get("issuer")),
+                                                ("税込金額", raw_response.get("amount_inclusive_tax")),
                                                 ("通貨", raw_response.get("currency"))
                                             ]
                                             

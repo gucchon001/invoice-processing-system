@@ -5,7 +5,7 @@
 # Streamlit設定ファイル（重要！）
 # ========================================
 .streamlit/secrets.toml
-.streamlit/config.toml
+# .streamlit/config.tomlは追跡対象（ファイル監視設定のため）
 
 # ========================================
 # 認証情報ファイル（重要！）

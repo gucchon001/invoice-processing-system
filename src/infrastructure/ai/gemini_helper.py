@@ -88,8 +88,44 @@ class GeminiAPIManager:
             logger.error(f"テキスト生成でエラー: {e}")
             return None
     
+    def _validate_pdf_content(self, pdf_content: bytes) -> bool:
+        """PDF内容を検証"""
+        try:
+            # 基本的なPDFサイズ・ヘッダーチェック
+            if not pdf_content or len(pdf_content) < 10:
+                logger.warning("PDFデータが空または短すぎます")
+                return False
+            
+            # PDFヘッダー確認
+            if not pdf_content.startswith(b'%PDF'):
+                logger.warning("有効なPDFヘッダーが見つかりません")
+                return False
+            
+            # サイズチェック（10MB以上は拒否）
+            if len(pdf_content) > 10 * 1024 * 1024:
+                logger.warning(f"PDFサイズが大きすぎます: {len(pdf_content)} bytes")
+                return False
+            
+            logger.debug(f"PDF検証成功: サイズ={len(pdf_content)} bytes")
+            return True
+            
+        except Exception as e:
+            logger.error(f"PDF検証エラー: {e}")
+            return False
+
     def analyze_pdf_content(self, pdf_content: bytes, prompt: str, max_retries: Optional[int] = None) -> Optional[Dict[str, Any]]:
-        """PDFコンテンツを分析（リトライ機能付き）"""
+        """PDFコンテンツを分析（リトライ機能付き・検証強化版）"""
+        # 🚨 緊急デバッグ（7/22）: 詳細ログ出力
+        logger.error(f"🔍 DEBUG: analyze_pdf_content開始 - PDFサイズ: {len(pdf_content)} bytes")
+        logger.error(f"🔍 DEBUG: プロンプト長: {len(prompt)} 文字")
+        
+        # 🚨 緊急修正（7/22）: PDF検証を追加
+        if not self._validate_pdf_content(pdf_content):
+            logger.error("PDF検証に失敗しました - 処理を中止します")
+            return None
+        
+        logger.error(f"🔍 DEBUG: PDF検証成功、API呼び出し開始")
+        
         # settings.iniから設定値を取得
         if max_retries is None:
             max_retries = self.max_retries
@@ -136,7 +172,17 @@ class GeminiAPIManager:
                 
             except Exception as e:
                 error_str = str(e)
-                if "429" in error_str or "quota" in error_str.lower():
+                
+                # 🚨 "no pages" エラーの特別処理（リトライしても解決しない）
+                if "no pages" in error_str.lower():
+                    logger.error(f"⚠️ PDF解析致命的エラー: PDFにページが認識されません - {e}")
+                    logger.error("📋 推定原因: PDF破損、空ファイル、またはフォーマット非対応")
+                    # このエラーはリトライしても解決しないため即座に終了
+                    return None
+                elif "400" in error_str and ("bad request" in error_str.lower() or "document" in error_str.lower()):
+                    logger.error(f"⚠️ PDF形式エラー: Gemini APIがPDFを処理できません - {e}")
+                    return None
+                elif "429" in error_str or "quota" in error_str.lower():
                     # レート制限エラーの場合（settings.iniから遅延時間を取得）
                     retry_delay = self.retry_delay if attempt == 0 else self.retry_delay * (attempt + 1)
                     logger.warning(f"Gemini API制限に達しました。{retry_delay}秒後にリトライします (試行 {attempt + 1}/{max_retries})")
@@ -148,14 +194,22 @@ class GeminiAPIManager:
                         return None
                 else:
                     logger.error(f"PDF分析でエラー: {e}")
-                    return None
+                    if attempt < max_retries - 1:
+                        time.sleep(self.retry_delay)
+                        continue
+                    else:
+                        return None
         
         return None
     
     def extract_invoice_data(self, pdf_content: bytes) -> Optional[Dict[str, Any]]:
         """請求書データ抽出（JSONプロンプト使用）"""
+        # 🚨 緊急デバッグ（7/22）: extract_invoice_data開始ログ
+        logger.error(f"🔍 DEBUG: extract_invoice_data開始 - PDFサイズ: {len(pdf_content)} bytes")
+        
         try:
             # プロンプトマネージャーを使用してJSON外出しプロンプト読み込み
+            logger.error("🔍 DEBUG: プロンプトマネージャー呼び出し中...")
             from utils.prompt_manager import get_prompt_manager
             
             prompt_manager = get_prompt_manager()
@@ -233,19 +287,18 @@ class GeminiAPIManager:
         請求書PDFデータ抽出（統合メソッド）
         強化版抽出機能も提供
         """
+        # 🚨 緊急デバッグ（7/22）: extract_pdf_invoice_data開始ログ
+        logger.error(f"🔍 DEBUG: extract_pdf_invoice_data開始 - PDFサイズ: {len(pdf_content)} bytes")
+        
         try:
-            # まず強化版抽出を試行
-            from infrastructure.ai.invoice_matcher import get_invoice_matcher
+            # 🚨 緊急修正（7/22）: 強化版抽出を一時的に無効化して安定性を確保
+            logger.error("🔍 DEBUG: 基本版請求書抽出を実行（強化版は一時無効化）")
+            return self.extract_invoice_data(pdf_content)
             
-            matcher_service = get_invoice_matcher()
-            result = matcher_service.enhanced_invoice_extraction(pdf_content)
-            
-            if result:
-                logger.info("強化版請求書抽出成功")
-                return result
-            else:
-                logger.warning("強化版抽出失敗、基本版にフォールバック")
-                return self.extract_invoice_data(pdf_content)
+            # 強化版は後日再有効化予定
+            # from infrastructure.ai.invoice_matcher import get_invoice_matcher
+            # matcher_service = get_invoice_matcher()
+            # result = matcher_service.enhanced_invoice_extraction(pdf_content)
                 
         except Exception as e:
             logger.error(f"統合抽出エラー: {e}")

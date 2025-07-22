@@ -147,7 +147,7 @@ class AgGridManager:
         )
     
     def create_invoice_editing_grid(self, data: pd.DataFrame) -> AgGrid:
-        """請求書編集用の高機能ag-grid作成"""
+        """請求書編集用の高機能ag-grid作成（完全28カラム対応）"""
         
         gb = GridOptionsBuilder.from_dataframe(data)
         
@@ -160,25 +160,23 @@ class AgGridManager:
             minWidth=100
         )
         
-        # ID列 - 編集不可、固定
+        # 1-7: 基本情報カラム
         gb.configure_column('id', editable=False, width=80, pinned='left')
-        
-        # ファイル名 - 編集不可
+        gb.configure_column('user_email', editable=False, width=180)
+        gb.configure_column('status', editable=True, width=100)
         gb.configure_column('file_name', editable=False, width=150)
+        gb.configure_column('uploaded_at', editable=False, width=130, filter='agDateColumnFilter')
+        gb.configure_column('created_at', editable=False, width=130, filter='agDateColumnFilter')
+        gb.configure_column('updated_at', editable=False, width=130, filter='agDateColumnFilter')
         
-        # 供給者名 - 編集可能、フィルタ強化
-        gb.configure_column('supplier_name', editable=True, width=180, 
+        # 8-12: 請求書基本情報カラム
+        gb.configure_column('issuer_name', editable=True, width=180, 
                           filter='agTextColumnFilter',
                           filterParams={'buttons': ['reset', 'apply']})
-        
-        # 請求書番号 - 編集可能
+        gb.configure_column('recipient_name', editable=True, width=180,
+                          filter='agTextColumnFilter')
         gb.configure_column('invoice_number', editable=True, width=140)
-        
-        # 日付列 - 日付フィルタ
-        gb.configure_column('invoice_date', editable=True, width=120,
-                          filter='agDateColumnFilter')
-        gb.configure_column('due_date', editable=True, width=120,
-                          filter='agDateColumnFilter')
+        gb.configure_column('registration_number', editable=True, width=140)
         
         # 通貨 - ドロップダウン選択
         currency_options = ['JPY', 'USD', 'EUR', 'GBP', 'CNY']
@@ -188,22 +186,55 @@ class AgGridManager:
                           cellEditorParams={'values': currency_options},
                           width=80)
         
-        # 金額列 - 数値フィルタ、フォーマット
-        gb.configure_column('amount_exclusive_tax', 
+        # 13-14: 金額情報カラム - 数値フィルタ、フォーマット
+        gb.configure_column('total_amount_tax_included',
                           editable=True,
                           type=['numericColumn', 'numberColumnFilter'],
                           valueFormatter="x.toLocaleString()",
-                          width=140)
-        gb.configure_column('tax_amount',
+                          width=150)
+        gb.configure_column('total_amount_tax_excluded', 
                           editable=True,
+                          type=['numericColumn', 'numberColumnFilter'],
+                          valueFormatter="x.toLocaleString()",
+                          width=150)
+        
+        # 15-16: 日付情報カラム
+        gb.configure_column('issue_date', editable=True, width=120,
+                          filter='agDateColumnFilter')
+        gb.configure_column('due_date', editable=True, width=120,
+                          filter='agDateColumnFilter')
+        
+        # 17-19: JSON情報カラム
+        gb.configure_column('key_info', editable=False, width=150,
+                          valueFormatter="JSON.stringify(value)")
+        gb.configure_column('raw_response', editable=False, width=100, hide=True)
+        gb.configure_column('extracted_data', editable=False, width=150,
+                          valueFormatter="JSON.stringify(value)")
+        
+        # 20-23: 検証・品質管理カラム
+        gb.configure_column('is_valid', editable=True, width=80)
+        gb.configure_column('validation_errors', editable=False, width=150,
+                          valueFormatter="Array.isArray(value) ? value.join(', ') : ''")
+        gb.configure_column('validation_warnings', editable=False, width=150,
+                          valueFormatter="Array.isArray(value) ? value.join(', ') : ''")
+        gb.configure_column('completeness_score', 
+                          editable=False,
+                          type=['numericColumn', 'numberColumnFilter'],
+                          width=120)
+        
+        # 24-28: メタデータカラム
+        gb.configure_column('processing_time',
+                          editable=False,
+                          type=['numericColumn', 'numberColumnFilter'],
+                          width=100)
+        gb.configure_column('gdrive_file_id', editable=False, width=100, hide=True)
+        gb.configure_column('file_path', editable=False, width=100, hide=True)
+        gb.configure_column('file_size',
+                          editable=False,
                           type=['numericColumn', 'numberColumnFilter'],
                           valueFormatter="x.toLocaleString()",
                           width=100)
-        gb.configure_column('amount_inclusive_tax',
-                          editable=True,
-                          type=['numericColumn', 'numberColumnFilter'],
-                          valueFormatter="x.toLocaleString()",
-                          width=140)
+        gb.configure_column('gemini_model', editable=False, width=100)
         
         # 勘定科目 - ドロップダウン選択
         account_titles = [

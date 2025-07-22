@@ -45,6 +45,34 @@ class DatabaseManager:
             logger.error(f"データベース接続テストでエラー: {e}")
             return False
     
+    def debug_table_schema(self, table_name: str = 'invoices'):
+        """テーブルスキーマをデバッグ出力する"""
+        try:
+            # 空のSELECTクエリでスキーマ情報を取得
+            result = self.supabase.table(table_name).select('*').limit(0).execute()
+            logger.error(f"🔍 DEBUG: {table_name}テーブルのスキーマ情報: {result}")
+            
+            # 実際のデータを1件取得してフィールド確認
+            sample_result = self.supabase.table(table_name).select('*').limit(1).execute()
+            if sample_result.data:
+                logger.error(f"🔍 DEBUG: {table_name}テーブルのサンプルデータ: {sample_result.data[0]}")
+                logger.error(f"🔍 DEBUG: {table_name}テーブルの実際のカラム: {list(sample_result.data[0].keys())}")
+            else:
+                logger.error(f"🔍 DEBUG: {table_name}テーブルにデータがありません")
+                
+        except Exception as e:
+            logger.error(f"🔍 DEBUG: テーブルスキーマ確認でエラー: {e}")
+    
+    def get_recent_invoices(self, limit: int = 10):
+        """最近の請求書データを取得する"""
+        try:
+            result = self.supabase.table('invoices').select('*').order('uploaded_at', desc=True).limit(limit).execute()
+            logger.info(f"📊 最近の請求書データ取得成功: {len(result.data)}件")
+            return result.data
+        except Exception as e:
+            logger.error(f"📊 最近の請求書データ取得でエラー: {e}")
+            return []
+    
     def create_tables(self) -> bool:
         """必要なテーブルを作成する"""
         try:
@@ -145,25 +173,103 @@ class DatabaseManager:
             return None
     
     def insert_invoice(self, invoice_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """統合ワークフロー用請求書データ挿入"""
+        """統合ワークフロー用請求書データ挿入（完全カラム対応・JST時間対応）"""
         try:
-            result = self.supabase.table('invoices').insert({
-                'supplier_name': invoice_data.get('supplier_name', ''),
-                'invoice_number': invoice_data.get('invoice_number', ''),
-                'invoice_date': invoice_data.get('invoice_date'),
-                'due_date': invoice_data.get('due_date'),
-                'total_amount': float(invoice_data.get('total_amount', 0)),
-                'tax_amount': float(invoice_data.get('tax_amount', 0)),
-                'currency': invoice_data.get('currency', 'JPY'),
-                'file_path': invoice_data.get('file_path', ''),
-                'file_name': invoice_data.get('file_name', ''),
-                'extracted_data': invoice_data.get('extracted_data', {}),
-                'created_by': invoice_data.get('created_by', ''),
-                'created_at': invoice_data.get('created_at'),
-                'status': invoice_data.get('status', 'extracted')
-            }).execute()
+            # 🔍 デバッグ: 挿入前のデータ確認
+            logger.info(f"🔄 請求書データ挿入開始 - ファイル: {invoice_data.get('file_name', 'N/A')}")
             
-            # DataFrameの場合はリストに変換してから判定
+            # AI抽出データの取得
+            extracted_data = invoice_data.get('extracted_data', {})
+            
+            # JST時間の取得
+            def get_jst_now():
+                from datetime import datetime, timezone, timedelta
+                jst = timezone(timedelta(hours=9))  # JST = UTC+9
+                return datetime.now(jst).isoformat()
+            
+            # 日付文字列の処理ヘルパー
+            def parse_date(date_str):
+                if not date_str:
+                    return None
+                try:
+                    from datetime import datetime
+                    if isinstance(date_str, str):
+                        # YYYY-MM-DD形式の場合
+                        return date_str if len(date_str) == 10 and '-' in date_str else None
+                    return None
+                except:
+                    return None
+            
+            # 数値の安全な変換
+            def safe_decimal(value, default=None):
+                if value is None:
+                    return default
+                try:
+                    return float(value) if value != '' else default
+                except (ValueError, TypeError):
+                    return default
+            
+            # JST時間を取得
+            from datetime import datetime, timezone, timedelta
+            jst = timezone(timedelta(hours=9))
+            jst_now = datetime.now(jst).isoformat()
+            
+            # 完全なデータマッピング（新しいカラム構造対応・JST時間対応）
+            insert_data = {
+                # 基本情報
+                'user_email': invoice_data.get('created_by', ''),
+                'file_name': invoice_data.get('file_name', ''),
+                'status': 'extracted',  # シンプルなステータス
+                
+                # JST時間を明示的に設定
+                'created_at': jst_now,
+                'updated_at': jst_now,
+                'uploaded_at': jst_now,
+                
+                # 請求書基本情報（個別カラム）
+                'issuer_name': extracted_data.get('issuer', '')[:255] if extracted_data.get('issuer') else None,
+                'recipient_name': extracted_data.get('payer', '')[:255] if extracted_data.get('payer') else None,
+                'invoice_number': extracted_data.get('main_invoice_number', '')[:100] if extracted_data.get('main_invoice_number') else None,
+                'registration_number': extracted_data.get('t_number', '')[:50] if extracted_data.get('t_number') else None,
+                'currency': extracted_data.get('currency', 'JPY')[:10] if extracted_data.get('currency') else 'JPY',
+                
+                # 金額情報
+                'total_amount_tax_included': safe_decimal(extracted_data.get('amount_inclusive_tax')),
+                'total_amount_tax_excluded': safe_decimal(extracted_data.get('amount_exclusive_tax')),
+                
+                # 日付情報
+                'issue_date': parse_date(extracted_data.get('issue_date')),
+                'due_date': parse_date(extracted_data.get('due_date')),
+                
+                # JSON形式データ
+                'key_info': extracted_data.get('key_info', {}),
+                'raw_response': invoice_data.get('raw_ai_response', extracted_data),  # AI生レスポンス
+                'extracted_data': extracted_data,  # 完全なAI抽出データ
+                
+                # 品質管理情報
+                'is_valid': True,  # 基本的に抽出成功時はTrue
+                'completeness_score': self._calculate_completeness_score(extracted_data),
+                'processing_time': invoice_data.get('processing_time'),
+                
+                # ファイル管理情報
+                'gdrive_file_id': invoice_data.get('file_path', ''),  # Google Drive ID
+                'file_path': invoice_data.get('gdrive_file_id', ''),
+                'file_size': invoice_data.get('file_size'),
+                
+                # AIモデル情報
+                'gemini_model': 'gemini-2.0-flash-exp'
+            }
+            
+            # Noneや空文字列のフィールドを除去（Supabaseエラー回避）
+            clean_data = {k: v for k, v in insert_data.items() if v is not None and v != ''}
+            
+            logger.info(f"✅ 挿入データ準備完了 - カラム数: {len(clean_data)}")
+            logger.debug(f"🔧 主要フィールド: issuer={clean_data.get('issuer_name')}, amount={clean_data.get('total_amount_tax_included')}, date={clean_data.get('issue_date')}")
+            
+            # データベースに挿入
+            result = self.supabase.table('invoices').insert(clean_data).execute()
+            
+            # レスポンス処理
             data = result.data if result.data else []
             if hasattr(data, 'to_dict'):
                 data = data.to_dict('records')
@@ -171,14 +277,39 @@ class DatabaseManager:
                 data = []
             
             if len(data) > 0:
-                logger.info(f"統合ワークフロー請求書挿入成功: {result.data[0]['id']}")
-                return result.data[0]
+                invoice_id = data[0].get('id')
+                logger.info(f"🎉 請求書挿入成功: ID={invoice_id}, 企業={clean_data.get('issuer_name', 'N/A')}")
+                return data[0]
             else:
                 raise Exception("データベースへの挿入に失敗しました")
                 
         except Exception as e:
-            logger.error(f"統合ワークフロー請求書挿入でエラー: {e}")
+            logger.error(f"❌ 請求書挿入エラー: {str(e)[:200]}")
+            logger.error(f"🔍 ファイル: {invoice_data.get('file_name', 'N/A')}")
+            
+            # 詳細エラー情報
+            if hasattr(e, 'details'):
+                logger.error(f"🔍 詳細: {e.details}")
+            
             raise e
+    
+    def _calculate_completeness_score(self, extracted_data: Dict) -> float:
+        """AI抽出データの完全性スコアを計算"""
+        try:
+            required_fields = ['issuer', 'payer', 'amount_inclusive_tax', 'issue_date']
+            optional_fields = ['main_invoice_number', 'due_date', 'currency', 't_number']
+            
+            # 必須フィールドの完全性（70%）
+            required_score = sum(1 for field in required_fields if extracted_data.get(field)) / len(required_fields) * 70
+            
+            # オプションフィールドの完全性（30%）
+            optional_score = sum(1 for field in optional_fields if extracted_data.get(field)) / len(optional_fields) * 30
+            
+            total_score = required_score + optional_score
+            return round(total_score, 1)
+            
+        except Exception:
+            return 50.0  # デフォルトスコア
     
     def update_invoice(self, invoice_id: int, update_data: Dict[str, Any]) -> bool:
         """請求書データを更新"""

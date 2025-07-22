@@ -7,6 +7,7 @@ JSONベースプロンプト管理による動的な照合処理を実現
 
 import json
 import logging
+import re
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
@@ -51,10 +52,38 @@ class InvoiceMatcherService:
             # プロンプト生成
             variables = {
                 "issuer_name": issuer_name,
-                "master_company_list": json.dumps(master_company_list, ensure_ascii=False)
+                "master_company_list": master_company_list  # JSON文字列ではなく配列として直接渡す
             }
             
-            prompt = self.prompt_manager.render_prompt("master_matcher_prompt", variables)
+            try:
+                prompt = self.prompt_manager.render_prompt("master_matcher_prompt", variables)
+            except (PromptValidationError, PromptLoadError) as e:
+                logger.error(f"プロンプト生成エラー: {e}")
+                # フォールバック: 手動でプロンプトを構築
+                company_list_str = json.dumps(master_company_list, ensure_ascii=False)
+                prompt = f"""
+以下の請求元企業名を支払マスタの企業名リストと照合してください。
+
+請求元企業名: {issuer_name}
+
+支払マスタ企業名リスト:
+{company_list_str}
+
+最も類似度が高い企業名を特定し、以下のJSON形式で回答してください：
+
+{{
+  "matched_company_name": "最も一致する企業名（85%以上の確信度がない場合はnull）",
+  "confidence_score": 0.95,
+  "matching_reason": "照合理由",
+  "matching_details": {{
+    "original_name": "{issuer_name}",
+    "normalized_original": "正規化後の請求元名",
+    "normalized_matched": "正規化後のマッチ名",
+    "transformation_applied": "適用した変換ルール"
+  }},
+  "alternative_candidates": []
+}}
+"""
             
             # Gemini APIで照合実行
             response = self.gemini_manager.generate_text(prompt)
@@ -63,9 +92,11 @@ class InvoiceMatcherService:
                 logger.error("企業名照合: Gemini APIからの応答がありません")
                 return enhanced_result  # 強化版の結果を返す（確信度が低くても）
             
-            # JSONレスポンスをパース
+            # JSONレスポンスをパース（エラーハンドリング強化）
             try:
-                result = json.loads(response)
+                # Geminiが説明文付きでレスポンスを返す場合の処理
+                cleaned_json = self._extract_json_from_response(response)
+                result = json.loads(cleaned_json)
                 
                 matched_name = result.get("matched_company_name")
                 confidence = result.get("confidence_score", 0)
@@ -84,7 +115,15 @@ class InvoiceMatcherService:
             except json.JSONDecodeError as e:
                 logger.error(f"企業名照合: JSON解析エラー: {e}")
                 logger.error(f"Raw response: {response}")
-                return enhanced_result  # 強化版の結果を返す
+                # フォールバック：照合失敗として処理
+                fallback_result = {
+                    "matched_company_name": None,
+                    "confidence_score": 0.0,
+                    "matching_reason": "JSON解析エラー",
+                    "matching_details": {"error": str(e)},
+                    "alternative_candidates": []
+                }
+                return enhanced_result if enhanced_result else fallback_result
                 
         except PromptValidationError as e:
             logger.error(f"企業名照合: プロンプト検証エラー: {e}")
@@ -93,6 +132,43 @@ class InvoiceMatcherService:
             logger.error(f"企業名照合: 予期しないエラー: {e}")
             return enhanced_result if 'enhanced_result' in locals() else None
     
+    def _extract_json_from_response(self, response: str) -> str:
+        """
+        Gemini AIレスポンスからJSON部分を抽出
+        
+        Args:
+            response: Gemini AIからの生レスポンス
+            
+        Returns:
+            抽出されたJSON文字列
+        """
+        try:
+            # パターン1: ```json ～ ``` ブロック
+            json_match = re.search(r'```json\s*\n(.*?)\n```', response, re.DOTALL)
+            if json_match:
+                return json_match.group(1).strip()
+            
+            # パターン2: ```～``` ブロック（json指定なし）
+            code_match = re.search(r'```\s*\n(.*?)\n```', response, re.DOTALL)
+            if code_match:
+                potential_json = code_match.group(1).strip()
+                # JSONっぽいかチェック
+                if potential_json.startswith('{') and potential_json.endswith('}'):
+                    return potential_json
+            
+            # パターン3: { ～ } の最初のJSONオブジェクト
+            brace_match = re.search(r'\{.*?\}', response, re.DOTALL)
+            if brace_match:
+                return brace_match.group(0)
+            
+            # どれも見つからない場合は元の文字列をそのまま返す
+            logger.warning("JSONパターンが見つかりません。元のレスポンスを返します。")
+            return response
+            
+        except Exception as e:
+            logger.error(f"JSON抽出エラー: {e}")
+            return response
+
     def _try_enhanced_matching(self, issuer_name: str, master_company_list: List[str]) -> Optional[Dict[str, Any]]:
         """強化版照合を試行"""
         try:
@@ -140,16 +216,24 @@ class InvoiceMatcherService:
                 logger.error("統合照合: Gemini APIからの応答がありません")
                 return None
             
-            # JSONレスポンスをパース
+            # JSONレスポンスをパース（エラーハンドリング強化）
             try:
-                result = json.loads(response)
+                # Geminiが説明文付きでレスポンスを返す場合の処理
+                cleaned_json = self._extract_json_from_response(response)
+                result = json.loads(cleaned_json)
                 logger.info(f"統合照合完了: {result.get('matched_entry_id', 'null')}")
                 return result
                 
             except json.JSONDecodeError as e:
                 logger.error(f"統合照合: JSON解析エラー: {e}")
                 logger.error(f"Raw response: {response}")
-                return None
+                # フォールバック：照合失敗として処理
+                return {
+                    "matched_entry_id": None,
+                    "confidence_score": 0.0,
+                    "selection_reason": "JSON解析エラー",
+                    "processing_notes": f"JSON解析エラー: {str(e)}"
+                }
                 
         except PromptValidationError as e:
             logger.error(f"統合照合: プロンプト検証エラー: {e}")
