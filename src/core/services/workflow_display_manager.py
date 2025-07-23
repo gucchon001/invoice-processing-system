@@ -113,7 +113,11 @@ class WorkflowDisplayManager:
         filename = result.get('filename', 'N/A')
         st.write(f"**ファイル名:** {filename}")
         
-        error_message = result.get('error_message', '詳細不明')
+        # 複数の可能性があるエラーメッセージキーをチェック
+        error_message = (result.get('error_message') or 
+                        result.get('error') or 
+                        result.get('error_details') or 
+                        '詳細不明')
         st.error(f"エラー内容: {error_message}")
         
         # エラー詳細がある場合

@@ -2828,6 +2828,10 @@ def execute_unified_ocr_test(folder_id, prompt_key, max_files, test_mode, includ
     
     finally:
         st.session_state.is_ocr_testing = False
+        
+        # UI更新を強制実行して結果表示
+        if st.session_state.ocr_test_results:
+            st.rerun()
 
 
 

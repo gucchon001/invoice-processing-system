@@ -6,6 +6,7 @@ OCRテスト機能とアップロード機能を統合した
 """
 
 import logging
+import time
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Union, Callable
@@ -93,6 +94,7 @@ class UnifiedProcessingWorkflow:
             処理結果辞書
         """
         session_id = str(uuid.uuid4())
+        start_time = time.time()  # 処理時間測定開始
         
         try:
             # セッション開始
@@ -124,6 +126,9 @@ class UnifiedProcessingWorkflow:
             # 結果の組み立て
             self.notify_progress(session_id, 3, 3, "完了")
             
+            # 処理時間計算
+            processing_time = time.time() - start_time
+            
             result = {
                 'session_id': session_id,
                 'filename': filename,
@@ -132,7 +137,9 @@ class UnifiedProcessingWorkflow:
                 'validation': validation_result,
                 'prompt_used': prompt_key,
                 'processed_at': get_jst_now(),
-                'status': ProcessingStatus.COMPLETED
+                'processing_time': processing_time,  # 処理時間を追加
+                'status': ProcessingStatus.COMPLETED,
+                'success': True  # 成功フラグを追加
             }
             
             # データベース保存（モードに応じて）
@@ -149,13 +156,18 @@ class UnifiedProcessingWorkflow:
         except Exception as e:
             logger.error(f"単一ファイル処理エラー: {e}")
             logger.exception(f"単一ファイル処理詳細エラー:")  # スタックトレースも出力
+            # エラー時も処理時間を記録
+            processing_time = time.time() - start_time
+            
             error_result = {
                 'session_id': session_id,
                 'filename': filename,
                 'error': str(e),
                 'error_details': f"Type: {type(e).__name__}, Message: {str(e)}",
                 'status': ProcessingStatus.FAILED,
-                'processed_at': get_jst_now()
+                'processed_at': get_jst_now(),
+                'processing_time': processing_time,  # エラー時も処理時間を追加
+                'success': False  # 失敗フラグを追加
             }
             
             await self._fail_session(session_id, error_result)
@@ -274,12 +286,23 @@ class UnifiedProcessingWorkflow:
                     results.append({
                         'filename': file_info['filename'],
                         'error': str(e),
-                        'status': ProcessingStatus.FAILED
+                        'status': ProcessingStatus.FAILED,
+                        'success': False,  # 失敗フラグを追加
+                        'processing_time': 0  # 処理時間も追加
                     })
             
-            # バッチ結果の集計
-            successful_files = sum(1 for r in results if r.get('status') == ProcessingStatus.COMPLETED)
-            failed_files = sum(1 for r in results if r.get('status') == ProcessingStatus.FAILED)
+            # デバッグ: 実際のresultsデータをログ出力
+            logger.info(f"🔍 バッチ結果集計デバッグ - 総ファイル数: {total_files}")
+            for i, r in enumerate(results):
+                logger.info(f"📄 ファイル{i+1}: {r.get('filename', 'N/A')}")
+                logger.info(f"   - status: {r.get('status', 'N/A')}")
+                logger.info(f"   - success: {r.get('success', 'N/A')}")
+                logger.info(f"   - error: {r.get('error', 'なし')}")
+                logger.info(f"   - 全キー: {list(r.keys())}")
+            
+            # 統一された集計ロジック（successキーで判定）
+            successful_files = sum(1 for r in results if r.get('success', False))
+            failed_files = total_files - successful_files
             total_processing_time = sum(r.get('processing_time', 0) for r in results)
             
             batch_result = {
@@ -755,18 +778,7 @@ class WorkflowDisplayManager:
         }
         self.display.display_file_info(file_info)
     
-    def display_batch_results(self, batch_result: Dict[str, Any]):
-        """バッチ処理結果の表示"""
-        import streamlit as st
-        
-        # バッチサマリーの表示
-        self.batch_display.display_batch_summary(batch_result.get('results', []))
-        
-        # ag-grid形式での詳細表示を追加
-        results = batch_result.get('results', [])
-        if results:
-            st.subheader("📊 詳細結果一覧 (ag-grid)")
-            self.display_detailed_results_with_aggrid(results)
+
         
         # 各ファイルの要約結果
         st.subheader("📋 ファイル別処理結果")
