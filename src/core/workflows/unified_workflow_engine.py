@@ -287,7 +287,7 @@ class UnifiedWorkflowEngine:
             
             # 統一データレコード準備
             invoice_record = {
-                "file_path": file_info.get("file_id", ""),
+                "file_id": file_info.get("file_id", ""),  # file_pathからfile_idに修正
                 "file_name": filename,
                 "extracted_data": extracted_data,
                 "created_by": user_id,
