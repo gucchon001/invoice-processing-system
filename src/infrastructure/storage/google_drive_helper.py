@@ -238,6 +238,41 @@ class GoogleDriveManager:
             logger.error(f"ファイル一覧取得でエラー: {e}")
             return []
     
+    def download_file(self, file_id: str) -> Optional[bytes]:
+        """ファイルをダウンロードする（共有ドライブ対応）
+        
+        Args:
+            file_id: ダウンロードするファイルID
+            
+        Returns:
+            ファイルの内容（バイト）またはNone
+        """
+        try:
+            import googleapiclient.http
+            
+            # ファイルのメディアコンテンツを取得
+            request = self.service.files().get_media(
+                fileId=file_id,
+                supportsAllDrives=True
+            )
+            
+            file_content = io.BytesIO()
+            downloader = googleapiclient.http.MediaIoBaseDownload(file_content, request)
+            
+            done = False
+            while done is False:
+                status, done = downloader.next_chunk()
+                
+            file_content.seek(0)
+            content = file_content.read()
+            
+            logger.info(f"ファイルダウンロード成功（共有ドライブ）: {file_id} ({len(content)} bytes)")
+            return content
+            
+        except Exception as e:
+            logger.error(f"ファイルダウンロードでエラー: {e}")
+            return None
+
     def delete_file(self, file_id: str) -> bool:
         """ファイルを削除する（共有ドライブ対応）
         

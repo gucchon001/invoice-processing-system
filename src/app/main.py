@@ -47,11 +47,18 @@ def show_debug_info():
 try:
     from infrastructure.auth.oauth_handler import require_auth, get_current_user, logout, is_authenticated
     from infrastructure.database.database import get_database, test_database_connection
-    from infrastructure.ai.gemini_helper import get_gemini_api, test_gemini_connection, generate_text_simple, extract_pdf_invoice_data
+    from infrastructure.ai.gemini_helper import get_gemini_api, test_gemini_connection, generate_text_simple, extract_pdf_invoice_data, GeminiAPIManager
     from infrastructure.storage.google_drive_helper import get_google_drive, test_google_drive_connection, upload_pdf_to_drive, get_drive_files_list
     from infrastructure.ui.aggrid_helper import get_aggrid_manager, test_aggrid_connection
-    from core.workflows.invoice_processing import InvoiceProcessingWorkflow, WorkflowStatus, WorkflowProgress, WorkflowResult
-    logger.info("全モジュールのインポートが完了しました")
+    from core.workflows.invoice_processing import InvoiceProcessingWorkflow, WorkflowProgress, WorkflowResult
+    
+    # 統一コンポーネントのインポート（絶対インポート修正）
+    from core.services.invoice_validator import InvoiceValidator
+    from core.services.unified_prompt_manager import UnifiedPromptManager, PromptSelector
+    from infrastructure.ui.validation_display import ValidationDisplay, BatchValidationDisplay
+    from core.workflows.unified_processing import UnifiedProcessingWorkflow, ProcessingMode, WorkflowDisplayManager
+    
+    logger.info("全モジュールのインポートが完了しました（統一コンポーネント含む）")
 except ImportError as e:
     logger.error(f"モジュールのインポートに失敗しました: {e}")
     st.error(f"モジュールのインポートに失敗しました: {e}")
@@ -60,13 +67,98 @@ except ImportError as e:
 
 
 def configure_page():
-    """ページ設定"""
+    """Streamlitページの基本設定"""
     st.set_page_config(
         page_title="請求書処理自動化システム",
         page_icon="📄",
-        layout="wide",
+        layout="wide",  
         initial_sidebar_state="expanded"
     )
+
+def initialize_session_state():
+    """セッション状態の初期化"""
+    try:
+        # プロンプト関連の初期化
+        if "prompt_manager" not in st.session_state:
+            from core.services.unified_prompt_manager import UnifiedPromptManager
+            st.session_state.prompt_manager = UnifiedPromptManager()
+            logger.info("✅ プロンプトマネージャー初期化完了")
+        
+        if "prompt_selector" not in st.session_state:
+            from core.services.prompt_selector import PromptSelector
+            st.session_state.prompt_selector = PromptSelector(st.session_state.prompt_manager)
+            logger.info("✅ プロンプトセレクター初期化完了")
+        
+        # 統合ワークフロー初期化
+        if "unified_workflow" not in st.session_state:
+            from core.workflows.unified_processing import UnifiedProcessingWorkflow
+            from infrastructure.ai.gemini_helper import GeminiAPIManager
+            from infrastructure.database.database import get_database
+            
+            gemini_helper = GeminiAPIManager()
+            database_manager = get_database()
+            
+            st.session_state.unified_workflow = UnifiedProcessingWorkflow(
+                gemini_helper=gemini_helper,
+                database_manager=database_manager
+            )
+            logger.info("✅ 統合ワークフロー初期化完了")
+        
+        # ワークフロー表示マネージャー初期化
+        if "workflow_display" not in st.session_state:
+            from core.services.workflow_display_manager import WorkflowDisplayManager
+            st.session_state.workflow_display = WorkflowDisplayManager(st.session_state.unified_workflow)
+            logger.info("✅ ワークフロー表示マネージャー初期化完了")
+        
+        # OCR専用統合ワークフロー初期化
+        if "unified_workflow_ocr" not in st.session_state:
+            try:
+                gemini_helper = GeminiAPIManager()
+                database_manager = get_database()
+                
+                st.session_state.unified_workflow_ocr = UnifiedProcessingWorkflow(
+                    gemini_helper=gemini_helper,
+                    database_manager=database_manager
+                )
+                logger.info("✅ OCR専用統合ワークフロー初期化完了")
+            except Exception as e:
+                logger.error(f"❌ OCR専用ワークフロー初期化エラー: {e}")
+                # エラーの場合はNoneを設定してエラーを回避
+                st.session_state.unified_workflow_ocr = None
+        
+        # OCR専用ワークフロー表示マネージャー初期化
+        if "workflow_display_ocr" not in st.session_state:
+            try:
+                if st.session_state.unified_workflow_ocr is not None:
+                    from core.services.workflow_display_manager import WorkflowDisplayManager
+                    st.session_state.workflow_display_ocr = WorkflowDisplayManager(st.session_state.unified_workflow_ocr)
+                    logger.info("✅ OCR専用ワークフロー表示マネージャー初期化完了")
+                else:
+                    st.session_state.workflow_display_ocr = None
+                    logger.warning("⚠️ OCR専用ワークフロー表示マネージャー初期化スキップ（ワークフローが未初期化）")
+            except Exception as e:
+                logger.error(f"❌ OCR専用ワークフロー表示マネージャー初期化エラー: {e}")
+                st.session_state.workflow_display_ocr = None
+        
+        # その他のセッション状態初期化
+        if "upload_results" not in st.session_state:
+            st.session_state.upload_results = []
+        
+        if "is_processing_upload" not in st.session_state:
+            st.session_state.is_processing_upload = False
+        
+        if "unified_processing_results" not in st.session_state:
+            st.session_state.unified_processing_results = []
+        
+        if "is_unified_processing" not in st.session_state:
+            st.session_state.is_unified_processing = False
+            
+        logger.info("✅ セッション状態初期化完了")
+        
+    except Exception as e:
+        logger.error(f"❌ セッション状態初期化エラー: {e}")
+        st.error(f"システム初期化エラー: {e}")
+        st.stop()
 
 
 def render_sidebar(user_info):
@@ -94,9 +186,8 @@ def render_sidebar(user_info):
         # TODO: ユーザーの役割に応じてメニューを切り替え
         # 現在は基本メニューのみ表示
         menu_options = [
-            "📤 請求書アップロード",
+            "📤 請求書処理",  # 統合ページ（アップロード+OCRテスト）
             "📊 処理状況ダッシュボード", 
-            "🔍 OCR精度テスト (Gemini 2.0-flash)",
             "⚙️ メール設定",
             "🔧 DB接続テスト",
             "🤖 Gemini APIテスト",
@@ -124,13 +215,52 @@ def render_sidebar(user_info):
         return selected_menu
 
 
-def render_upload_page():
-    """請求書アップロード画面"""
-    st.markdown("## 📤 請求書アップロード")
+def render_unified_invoice_processing_page():
+    """統合請求書処理ページ - 本番アップロード＋OCRテスト"""
+    st.markdown("# 📤 請求書処理")
+    st.markdown("本番アップロードとOCRテストを統一ワークフローで処理します")
     
-    st.info("📋 PDFファイルをアップロードして、AI による自動処理を開始します。")
+    # タブ作成
+    tab1, tab2 = st.tabs(["🚀 本番アップロード", "🔍 OCRテスト"])
     
-    # ファイルアップローダー
+    with tab1:
+        st.markdown("### 🚀 本番アップロード")
+        st.caption("📝 請求書PDFをアップロードして本番データベースに保存します")
+        render_production_upload_content()
+    
+    with tab2:
+        st.markdown("### 🔍 OCRテスト")
+        st.caption("📝 Google DriveのPDFファイルでOCR精度をテストします")
+        render_ocr_test_content()
+
+def render_production_upload_content():
+    """本番アップロードコンテンツ"""
+    # プロンプト自動選択（本番モード）
+    prompt_selector = st.session_state.prompt_selector
+    selected_prompt_key = prompt_selector.get_recommended_prompt(ProcessingMode.UPLOAD)
+    
+    if selected_prompt_key:
+        prompt_data = st.session_state.prompt_manager.get_prompt_by_key(selected_prompt_key)
+        if prompt_data:
+            prompt_name = prompt_data.get('name', selected_prompt_key)
+            st.success(f"✅ 自動選択されたプロンプト: **{prompt_name}**")
+            st.caption("📝 本番処理に最適なプロンプトが自動選択されます")
+        
+        # プロンプト互換性チェック
+        is_compatible, warnings = st.session_state.prompt_manager.validate_prompt_compatibility(
+            selected_prompt_key, ProcessingMode.UPLOAD
+        )
+        if warnings:
+            for warning in warnings:
+                st.warning(f"⚠️ {warning}")
+        else:
+            st.success("✅ 互換性OK")
+    else:
+        st.error("適切なプロンプトが見つかりません")
+        return
+    
+    # ファイルアップロード
+    st.markdown("### 📁 ファイルアップロード")
     uploaded_files = st.file_uploader(
         "請求書PDFファイルを選択してください",
         type=['pdf'],
@@ -138,61 +268,154 @@ def render_upload_page():
         help="複数のPDFファイルを同時にアップロードできます"
     )
     
+    # 処理設定
+    st.markdown("### ⚙️ 処理設定")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        include_validation = st.checkbox(
+            "詳細検証実行",
+            value=True,
+            help="統一検証システムによる詳細分析を実行",
+            key="production_include_validation"
+        )
+    
+    with col2:
+        auto_save = st.checkbox(
+            "自動保存",
+            value=True,
+            help="処理完了後に自動的にデータベースに保存",
+            key="production_auto_save"
+        )
+    
+    # 処理実行
     if uploaded_files:
-        st.success(f"✅ {len(uploaded_files)} 件のファイルが選択されました")
+        st.markdown("### 🚀 処理実行")
         
-        # アップロードされたファイルの詳細表示
-        for i, file in enumerate(uploaded_files, 1):
-            with st.expander(f"📄 {i}. {file.name}"):
-                st.write(f"**ファイル名:** {file.name}")
-                st.write(f"**サイズ:** {file.size:,} bytes")
-                st.write(f"**タイプ:** {file.type}")
-        
-        # セッション状態の初期化
-        if "upload_progress" not in st.session_state:
-            st.session_state.upload_progress = []
-        if "upload_results" not in st.session_state:
-            st.session_state.upload_results = []
-        if "is_processing_upload" not in st.session_state:
-            st.session_state.is_processing_upload = False
-
-        # 処理開始ボタン
-        if st.button("🚀 AI処理を開始", type="primary", use_container_width=True):
-            if not st.session_state.is_processing_upload:
-                st.session_state.is_processing_upload = True
-                st.session_state.upload_progress = []
-                st.session_state.upload_results = []
-                
-                # 現在のユーザー情報取得
-                user_info = get_current_user()
-                user_id = user_info.get('email', 'anonymous@example.com') if user_info else 'anonymous@example.com'
-                
-                # 複数ファイルの統合ワークフロー実行
-                execute_multiple_invoice_processing(uploaded_files, user_id)
-            else:
-                st.warning("現在処理中です。しばらくお待ちください。")
-
-        # 処理中の進捗表示（シンプル版）
-        if st.session_state.is_processing_upload:
-            st.markdown("### 📊 処理進捗")
-            st.info("🔄 ファイル処理中です... 完了まで少々お待ちください")
+        if st.button(f"📊 本番処理開始 ({len(uploaded_files)}件)", type="primary", use_container_width=True):
+            validation_config = {
+                'include_detailed_validation': include_validation,
+                'auto_save': auto_save,
+                'processing_mode': 'production'
+            }
             
-            # 進捗情報があれば表示（リアルタイム更新なし）
-            if st.session_state.upload_progress:
-                latest = st.session_state.upload_progress[-1]
-                step = latest.get('step', '')
-                progress = latest.get('progress_percent', 0)
-                st.progress(progress / 100, text=f"{step} ({progress}%)")
-        else:
-            # 処理完了後の詳細進捗表示
-            if st.session_state.upload_progress:
-                st.markdown("### 📊 処理進捗")
-                render_upload_progress()
+            execute_unified_upload_processing(
+                uploaded_files,
+                selected_prompt_key,
+                validation_config,
+                ProcessingMode.UPLOAD
+            )
+    
+    # アップロード進行状況表示
+    if st.session_state.get('is_processing_upload', False):
+        render_upload_progress()
+    
+    # アップロード結果表示（統一システム）
+    if st.session_state.get('unified_processing_results'):
+        # include_validationはproduction_include_validationキーから取得
+        include_validation = st.session_state.get('production_include_validation', True)
+        render_unified_upload_results(include_validation)
 
-        # 処理結果表示
-        if st.session_state.upload_results and not st.session_state.is_processing_upload:
-            st.markdown("### 📋 処理結果")
-            render_upload_results()
+def render_ocr_test_content():
+    """OCRテストコンテンツ"""
+    # プロンプト自動選択（OCRテストモード）
+    prompt_selector = st.session_state.prompt_selector
+    selected_prompt_key = prompt_selector.get_recommended_prompt(ProcessingMode.OCR_TEST)
+    
+    if selected_prompt_key:
+        prompt_data = st.session_state.prompt_manager.get_prompt_by_key(selected_prompt_key)
+        if prompt_data:
+            prompt_name = prompt_data.get('name', selected_prompt_key)
+            st.success(f"✅ 自動選択されたプロンプト: **{prompt_name}**")
+            st.caption("📝 OCRテストに最適なプロンプトが自動選択されます")
+        
+        # プロンプト互換性チェック
+        is_compatible, warnings = st.session_state.prompt_manager.validate_prompt_compatibility(
+            selected_prompt_key, ProcessingMode.OCR_TEST
+        )
+        if warnings:
+            for warning in warnings:
+                st.warning(f"⚠️ {warning}")
+        else:
+            st.success("✅ 互換性OK")
+    else:
+        st.error("適切なプロンプトが見つかりません")
+        return
+    
+    # テスト設定
+    st.markdown("### 🔧 テスト設定")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        test_mode = st.selectbox(
+            "テストモード",
+            ["精度重視", "速度重視", "バランス"],
+            help="テストの重点項目を選択します"
+        )
+    
+    with col2:
+        max_files = st.selectbox(
+            "テスト対象ファイル数",
+            [5, 10, 20, 50, -1],
+            format_func=lambda x: "全て" if x == -1 else f"{x}件",
+            index=0,
+            help="処理するPDFファイルの最大件数"
+        )
+    
+    with col3:
+        include_validation = st.checkbox(
+            "詳細検証実行",
+            value=True,
+            help="統一検証システムによる詳細分析を実行",
+            key="unified_ocr_test_include_validation"
+        )
+    
+    # Google DriveフォルダID設定
+    st.markdown("### 📁 テスト対象フォルダ")
+    default_folder_id = "1ZCJsI9j8A9VJcmiY79BcP1jgzsD51X6E"
+    folder_id = st.text_input(
+        "Google DriveフォルダID",
+        value=default_folder_id,
+        help="テスト対象PDFが格納されたGoogle DriveフォルダのID"
+    )
+    
+    # セッション状態の初期化
+    if "ocr_test_results" not in st.session_state:
+        st.session_state.ocr_test_results = []
+    if "is_ocr_testing" not in st.session_state:
+        st.session_state.is_ocr_testing = False
+    
+    # テスト実行ボタン
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        button_text = f"🚀 統一OCRテスト開始 ({max_files if max_files != -1 else '全'}件)"
+        
+        if st.button(button_text, type="primary", use_container_width=True):
+            if not folder_id:
+                st.error("フォルダIDを入力してください")
+            elif not selected_prompt_key:
+                st.error("プロンプトが選択されていません")
+            elif not st.session_state.is_ocr_testing:
+                execute_unified_ocr_test(
+                    folder_id,
+                    selected_prompt_key,
+                    max_files,
+                    test_mode,
+                    include_validation
+                )
+            else:
+                st.warning("現在テスト実行中です。しばらくお待ちください。")
+    
+    with col2:
+        if st.button("🔄 リセット", use_container_width=True):
+            st.session_state.ocr_test_results = []
+            st.session_state.is_ocr_testing = False
+            st.rerun()
+    
+    # テスト結果表示
+    if st.session_state.ocr_test_results:
+        render_ocr_test_results(include_validation)
 
 
 def render_dashboard_page():
@@ -567,13 +790,15 @@ def render_settings_page():
     notify_success = st.checkbox(
         "✅ 処理完了時にメールで通知する",
         value=True,
-        help="請求書の AI 処理が完了した際にメール通知を送信します"
+        help="請求書の AI 処理が完了した際にメール通知を送信します",
+        key="email_notify_success"
     )
     
     notify_error = st.checkbox(
         "❌ エラー発生時にメールで通知する",
         value=True,
-        help="処理中にエラーが発生した際にメール通知を送信します"
+        help="処理中にエラーが発生した際にメール通知を送信します",
+        key="email_notify_error"
     )
     
     # 保存ボタン
@@ -2119,10 +2344,10 @@ def render_workflow_result():
 
 
 def render_main_content(selected_menu, user_info):
-    """メインコンテンツエリアをレンダリング"""
+    """メインコンテンツをレンダリング"""
     
-    if selected_menu == "📤 請求書アップロード":
-        render_upload_page()
+    if selected_menu == "📤 請求書処理":
+        render_unified_invoice_processing_page()  # 新しい統合ページ
     
     elif selected_menu == "📊 処理状況ダッシュボード":
         render_dashboard_page()
@@ -2145,9 +2370,6 @@ def render_main_content(selected_menu, user_info):
     elif selected_menu == "🔄 統合ワークフローテスト":
         render_integrated_workflow_test_page()
     
-    elif selected_menu == "🔍 OCR精度テスト (Gemini 2.0-flash)":
-        render_ocr_test_page()
-    
     else:
         # デフォルト画面
         st.markdown("## 🏠 ホーム")
@@ -2157,203 +2379,87 @@ def render_main_content(selected_menu, user_info):
         ### 📋 システム概要
         このシステムでは以下の機能をご利用いただけます：
         
-        - **📤 請求書アップロード**: PDFファイルをアップロードして自動処理
+        - **📤 請求書処理**: 本番アップロード・OCRテストの統合ページ
         - **📊 処理状況ダッシュボード**: アップロードした請求書の状況確認・編集
         - **⚙️ メール設定**: 通知設定の管理
         
         ### 🚀 開始方法
-        1. サイドバーから「📤 請求書アップロード」を選択
-        2. PDFファイルをアップロード
-        3. AI による自動処理を開始
-        4. 「📊 処理状況ダッシュボード」で結果を確認
+        1. サイドバーから「📤 請求書処理」を選択
+        2. 「本番アップロード」または「OCRテスト」タブを選択
+        3. PDFファイルをアップロード
+        4. AI による自動処理を開始
+        5. 「📊 処理状況ダッシュボード」で結果を確認
         """)
 
 
-def execute_multiple_invoice_processing(uploaded_files, user_id):
-    """複数ファイルの統合ワークフロー実行"""
+def execute_unified_upload_processing(uploaded_files, prompt_key, validation_config, processing_mode):
+    """統一ワークフローによるアップロード処理（新アダプター対応）"""
+    st.session_state.is_unified_processing = True
+    st.session_state.unified_processing_results = []
     
-    # 進捗コールバック関数（複数ファイル対応版）
-    def progress_callback(progress: WorkflowProgress, file_index: int, total_files: int):
-        # ファイル全体の進捗を計算（各ファイルで100%を均等分割）
-        file_progress = (file_index * 100 + progress.progress_percent) / total_files
-        
-        st.session_state.upload_progress.append({
-            'file_index': file_index,
-            'filename': uploaded_files[file_index].name if file_index < len(uploaded_files) else '',
-            'status': progress.status.value,
-            'step': progress.step,
-            'progress_percent': progress.progress_percent,
-            'overall_progress': file_progress,
-            'message': progress.message,
-            'timestamp': progress.timestamp.strftime("%H:%M:%S"),
-            'details': progress.details
-        })
-        
-        # 🔄 進捗表示の適切な更新ロジック
-        logger.info(f"進捗通知: {progress.step} ({progress.progress_percent}%)")
-        
-        # 処理完了・失敗時は最終更新のみ実行
-        if progress.status.value in ['completed', 'failed']:
-            logger.info(f"進捗通知: {progress.step} - 最終更新実行")
-            try:
-                if st.session_state.is_processing_upload:
-                    st.rerun()
-            except Exception as e:
-                logger.warning(f"最終進捗更新エラー: {e}")
-            return
-        
-        # 🚨 完全修正：中間進捗更新を完全無効化（無限ループ防止）
-        logger.info(f"進捗ログのみ記録: {progress.progress_percent}% - リアルタイム更新は無効化")
-        logger.debug(f"進捗更新: {progress.step} - {progress.message}")
+    # 統一ワークフローの取得
+    workflow = st.session_state.unified_workflow
+    display_manager = st.session_state.workflow_display
     
     try:
-        # サービスの初期化
-        ai_service = get_gemini_api()
-        storage_service = get_google_drive()
-        database_service = get_database()
-        
-        total_files = len(uploaded_files)
-        
-        # 処理開始の通知
-        st.session_state.upload_progress.append({
-            'file_index': 0,
-            'filename': '処理開始',
-            'status': 'processing',
-            'step': '初期化',
-            'progress_percent': 0,
-            'overall_progress': 0,
-            'message': f'{total_files}件のファイル処理を開始します',
-            'timestamp': datetime.now().strftime("%H:%M:%S"),
-            'details': {'total_files': total_files}
-        })
-        
-        # 各ファイルを順次処理
-        for file_index, uploaded_file in enumerate(uploaded_files):
-            try:
-                # ファイル処理開始の通知
-                st.session_state.upload_progress.append({
-                    'file_index': file_index,
-                    'filename': uploaded_file.name,
-                    'status': 'processing',
-                    'step': 'ファイル処理開始',
-                    'progress_percent': 0,
-                    'overall_progress': (file_index * 100) / total_files,
-                    'message': f'{uploaded_file.name}の処理を開始',
-                    'timestamp': datetime.now().strftime("%H:%M:%S"),
-                    'details': {'file_size': uploaded_file.size}
-                })
-                
-                # ファイル固有の進捗コールバック（変数キャプチャ対応）
-                file_progress_callback = lambda progress, idx=file_index: progress_callback(progress, idx, total_files)
-                
-                # ワークフローインスタンス作成
-                workflow = InvoiceProcessingWorkflow(
-                    ai_service=ai_service,
-                    storage_service=storage_service,
-                    database_service=database_service,
-                    progress_callback=file_progress_callback
-                )
-                
-                # PDFデータ取得
-                pdf_data = uploaded_file.read()
-                filename = uploaded_file.name
-                
-                # ワークフロー実行
-                result = workflow.process_invoice(pdf_data, filename, user_id)
-                
-                # 結果を保存
-                st.session_state.upload_results.append({
-                    'filename': filename,
-                    'success': result.success,
-                    'invoice_id': result.invoice_id,
-                    'extracted_data': result.extracted_data,
-                    'file_info': result.file_info,
-                    'error_message': result.error_message,
-                    'processing_time': result.processing_time
-                })
-                
-                # ファイル完了の通知
-                success_icon = "✅" if result.success else "❌"
-                st.session_state.upload_progress.append({
-                    'file_index': file_index,
-                    'filename': uploaded_file.name,
-                    'status': 'completed' if result.success else 'failed',
-                    'step': 'ファイル処理完了',
-                    'progress_percent': 100,
-                    'overall_progress': ((file_index + 1) * 100) / total_files,
-                    'message': f'{success_icon} {uploaded_file.name}の処理完了',
-                    'timestamp': datetime.now().strftime("%H:%M:%S"),
-                    'details': {'success': result.success, 'processing_time': result.processing_time}
-                })
-                
-                logger.info(f"ファイル処理完了: {filename} (成功: {result.success})")
-                
-            except Exception as e:
-                # 個別ファイルエラー
-                st.session_state.upload_results.append({
-                    'filename': uploaded_file.name,
-                    'success': False,
-                    'error_message': f"ファイル処理エラー: {str(e)}"
-                })
-                
-                # エラーの通知
-                st.session_state.upload_progress.append({
-                    'file_index': file_index,
-                    'filename': uploaded_file.name,
-                    'status': 'failed',
-                    'step': 'エラー発生',
-                    'progress_percent': 0,
-                    'overall_progress': ((file_index + 1) * 100) / total_files,
-                    'message': f'❌ {uploaded_file.name}でエラー: {str(e)}',
-                    'timestamp': datetime.now().strftime("%H:%M:%S"),
-                    'details': {'error': str(e)}
-                })
-                
-                logger.error(f"ファイル処理エラー ({uploaded_file.name}): {e}")
-        
-        # 全体処理完了の通知
-        successful_count = len([r for r in st.session_state.upload_results if r.get('success', False)])
-        st.session_state.upload_progress.append({
-            'file_index': total_files,
-            'filename': '全体処理完了',
-            'status': 'completed',
-            'step': '処理完了',
-            'progress_percent': 100,
-            'overall_progress': 100,
-            'message': f'🎉 全体処理完了: {successful_count}/{total_files}件成功',
-            'timestamp': datetime.now().strftime("%H:%M:%S"),
-            'details': {'total_files': total_files, 'successful_count': successful_count}
-        })
+        with st.spinner("統一ワークフローで処理中..."):
+            # 新しい統一インターフェースで処理実行
+            import asyncio
+            result = asyncio.run(workflow.process_uploaded_files(
+                uploaded_files,
+                mode=processing_mode,
+                prompt_key=prompt_key,
+                validation_config=validation_config
+            ))
+            
+            st.session_state.unified_processing_results = [result]
+            
+        st.success("✅ 統一ワークフロー処理が完了しました！")
         
     except Exception as e:
-        # 全体エラー
-        logger.error(f"複数ファイル処理でエラー: {e}")
-        st.error(f"処理中にエラーが発生しました: {e}")
+        st.error(f"統一ワークフロー処理エラー: {e}")
+        logger.error(f"統一ワークフロー処理エラー: {e}")
         
-        # 全体エラーの通知
-        st.session_state.upload_progress.append({
-            'file_index': 0,
-            'filename': 'システムエラー',
+        # エラー結果を保存
+        st.session_state.unified_processing_results = [{
+            'error': str(e),
             'status': 'failed',
-            'step': 'システムエラー',
-            'progress_percent': 0,
-            'overall_progress': 0,
-            'message': f'❌ システムエラー: {str(e)}',
-            'timestamp': datetime.now().strftime("%H:%M:%S"),
-            'details': {'system_error': str(e)}
-        })
+            'processed_at': datetime.now().isoformat()
+        }]
     
     finally:
-        st.session_state.is_processing_upload = False
-        # 最終的な画面更新（条件付き）
-        if st.session_state.upload_results:  # 結果がある場合のみ更新
-            logger.info("処理完了 - 最終画面更新を実行")
-            try:
-                st.rerun()
-            except Exception as e:
-                logger.warning(f"最終更新エラー: {e}")
+        # 処理中フラグをリセット
+        st.session_state.is_unified_processing = False
+
+def render_unified_upload_results(show_detailed_validation):
+    """統一ワークフロー結果の表示"""
+    if not st.session_state.unified_processing_results:
+        return
+    
+    st.markdown("### 📋 処理結果（統一ワークフロー）")
+    
+    results = st.session_state.unified_processing_results
+    display_manager = st.session_state.workflow_display
+    
+    for result in results:
+        if result.get('error'):
+            st.error(f"処理エラー: {result['error']}")
+            continue
+        
+        # バッチ処理結果の場合（mode確認を修正）
+        if (result.get('mode') == ProcessingMode.BATCH or 
+            result.get('mode') == 'batch' or
+            result.get('total_files', 0) > 1 or
+            isinstance(result.get('results'), list)):
+            
+            st.info(f"🎯 バッチ処理結果を表示中... ファイル数: {result.get('total_files', len(result.get('results', [])))}")
+            display_manager.display_batch_results(result)
         else:
-            logger.info("処理完了 - 結果が無いため画面更新をスキップ")
+            # 単一ファイル結果の場合
+            st.info("🎯 単一ファイル結果を表示中...")
+            display_manager.display_single_result(result)
+
+
 
 
 def render_upload_progress():
@@ -2443,15 +2549,128 @@ def render_upload_progress():
 
 
 def render_ocr_test_page():
-    """OCRテストページ"""
-    try:
-        from utils.ocr_test_helper import create_ocr_test_app
+    """OCRテスト機能（統一コンポーネント版）- プロンプト自動選択対応"""
+    st.markdown("## 🔍 OCR精度テスト (Gemini 2.0-flash)")
+    
+    st.info("📋 統一されたワークフローでOCR精度テストを実行します。既存のPDFファイルでAI解析の精度を検証できます。")
+    
+    # 統一ワークフローの初期化
+    if "unified_workflow_ocr" not in st.session_state:
+        try:
+            # GeminiAPIManagerの直接インスタンス化
+            gemini_helper = GeminiAPIManager()
+            database_manager = get_database()
+            st.session_state.unified_workflow_ocr = UnifiedProcessingWorkflow(
+                gemini_helper=gemini_helper,
+                database_manager=database_manager
+            )
+            st.session_state.workflow_display_ocr = WorkflowDisplayManager(st.session_state.unified_workflow_ocr)
+        except Exception as e:
+            st.error(f"OCRテストワークフロー初期化エラー: {e}")
+            return
+    
+    # プロンプト自動選択（手動選択不要）
+    st.markdown("### 🤖 プロンプト設定")
+    prompt_manager = UnifiedPromptManager()
+    prompt_selector = PromptSelector(prompt_manager)
+    
+    # OCRテスト用プロンプト自動選択
+    selected_prompt_key = prompt_selector.get_recommended_prompt(ProcessingMode.OCR_TEST)
+    
+    if selected_prompt_key:
+        prompt_data = prompt_manager.get_prompt_by_key(selected_prompt_key)
+        if prompt_data:
+            prompt_name = prompt_data.get('name', selected_prompt_key)
+            st.success(f"✅ 自動選択されたプロンプト: **{prompt_name}**")
+            st.caption("📝 OCRテストに最適なプロンプトが自動選択されます")
         
-        # OCRテストアプリを作成（デバッグパネルは全ページ共通で表示済み）
-        create_ocr_test_app()
-    except ImportError as e:
-        st.error(f"OCRテストモジュールの読み込みに失敗しました: {e}")
-        st.info("必要なモジュールが不足している可能性があります。")
+        # プロンプト互換性チェック
+        is_compatible, warnings = prompt_manager.validate_prompt_compatibility(
+            selected_prompt_key, ProcessingMode.OCR_TEST
+        )
+        if warnings:
+            for warning in warnings:
+                st.warning(f"⚠️ {warning}")
+        else:
+            st.success("✅ 互換性OK")
+    else:
+        st.error("適切なプロンプトが見つかりません")
+        selected_prompt_key = None
+    
+    # テスト設定
+    st.markdown("### 🔧 テスト設定")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        test_mode = st.selectbox(
+            "テストモード",
+            ["精度重視", "速度重視", "バランス"],
+            help="テストの重点項目を選択します"
+        )
+    
+    with col2:
+        max_files = st.selectbox(
+            "テスト対象ファイル数",
+            [5, 10, 20, 50, -1],
+            format_func=lambda x: "全て" if x == -1 else f"{x}件",
+            index=0,
+            help="処理するPDFファイルの最大件数"
+        )
+    
+    with col3:
+        include_validation = st.checkbox(
+            "詳細検証実行",
+            value=True,
+            help="統一検証システムによる詳細分析を実行",
+            key="standalone_ocr_test_include_validation"
+        )
+    
+    # Google DriveフォルダID設定
+    st.markdown("### 📁 テスト対象フォルダ")
+    default_folder_id = "1ZCJsI9j8A9VJcmiY79BcP1jgzsD51X6E"
+    folder_id = st.text_input(
+        "Google DriveフォルダID",
+        value=default_folder_id,
+        help="テスト対象PDFが格納されたGoogle DriveフォルダのID"
+    )
+    
+    # セッション状態の初期化
+    if "ocr_test_results" not in st.session_state:
+        st.session_state.ocr_test_results = []
+    if "is_ocr_testing" not in st.session_state:
+        st.session_state.is_ocr_testing = False
+    
+    # テスト実行ボタン
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        button_text = f"🚀 統一OCRテスト開始 ({max_files if max_files != -1 else '全'}件)"
+        
+        if st.button(button_text, type="primary", use_container_width=True):
+            if not folder_id:
+                st.error("フォルダIDを入力してください")
+            elif not selected_prompt_key:
+                st.error("プロンプトが選択されていません")
+            elif not st.session_state.is_ocr_testing:
+                execute_unified_ocr_test(
+                    folder_id,
+                    selected_prompt_key,
+                    max_files,
+                    test_mode,
+                    include_validation
+                )
+            else:
+                st.warning("現在テスト実行中です。しばらくお待ちください。")
+    
+    with col2:
+        if st.button("🔄 リセット", use_container_width=True):
+            st.session_state.ocr_test_results = []
+            st.session_state.is_ocr_testing = False
+            st.rerun()
+    
+    # テスト結果表示
+    if st.session_state.ocr_test_results:
+        render_ocr_test_results(include_validation)
 
 
 def render_upload_results():
@@ -2468,46 +2687,13 @@ def render_upload_results():
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.metric("📊 総ファイル数", total_files)
+        st.metric("総ファイル数", total_files)
     
     with col2:
-        st.metric("✅ 成功", successful_files)
+        st.metric("成功", successful_files)
     
     with col3:
-        st.metric("❌ 失敗", failed_files)
-    
-    # 詳細結果
-    for i, result in enumerate(results, 1):
-        filename = result.get('filename', f'ファイル{i}')
-        success = result.get('success', False)
-        
-        if success:
-            with st.expander(f"✅ {filename} - 処理成功", expanded=False):
-                invoice_id = result.get('invoice_id', 'N/A')
-                processing_time = result.get('processing_time', 0)
-                
-                st.write(f"**請求書ID:** {invoice_id}")
-                st.write(f"**処理時間:** {processing_time:.2f}秒")
-                
-                # 抽出データ表示
-                extracted_data = result.get('extracted_data', {})
-                if extracted_data:
-                    st.write("**主要情報:**")
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.write(f"• 供給者名: {extracted_data.get('issuer', 'N/A')}")
-                        st.write(f"• 請求書番号: {extracted_data.get('main_invoice_number', 'N/A')}")
-                        st.write(f"• 通貨: {extracted_data.get('currency', 'JPY')}")
-                    
-                    with col2:
-                        st.write(f"• 合計金額: ¥{extracted_data.get('amount_inclusive_tax', 0):,}")
-                        st.write(f"• 税額: ¥{(extracted_data.get('amount_inclusive_tax', 0) - extracted_data.get('amount_exclusive_tax', 0)):,}")
-                        st.write(f"• 請求日: {extracted_data.get('issue_date', 'N/A')}")
-        else:
-            with st.expander(f"❌ {filename} - 処理失敗", expanded=False):
-                error_message = result.get('error_message', '詳細不明')
-                st.error(f"エラー内容: {error_message}")
+        st.metric("失敗", failed_files)
     
     # 操作ボタン
     col1, col2 = st.columns(2)
@@ -2526,6 +2712,125 @@ def render_upload_results():
             st.rerun()
 
 
+def render_ocr_test_results(include_validation):
+    """OCRテスト結果の表示"""
+    st.markdown("---")
+    st.markdown("### 📊 OCRテスト結果")
+    
+    for result in st.session_state.ocr_test_results:
+        if result.get('error'):
+            st.error(f"❌ テスト失敗: {result['error']}")
+        else:
+            # バッチ処理結果サマリー表示
+            st.success(f"✅ OCRテスト完了")
+            
+            # 結果の詳細は統一ワークフロー表示マネージャーを使用
+            workflow_display = st.session_state.get('workflow_display_ocr')
+            if workflow_display:
+                workflow_display.display_batch_results(result)
+
+def execute_unified_ocr_test(folder_id, prompt_key, max_files, test_mode, include_validation):
+    """統一ワークフローによるOCRテスト実行 - ダウンロード機能修正版"""
+    st.session_state.is_ocr_testing = True
+    st.session_state.ocr_test_results = []
+    
+    # 現在のユーザー情報取得
+    user_info = get_current_user()
+    user_id = user_info.get('email', 'test@example.com') if user_info else 'test@example.com'
+    
+    # 統一ワークフローの取得（安全性チェック付き）
+    if not hasattr(st.session_state, 'unified_workflow_ocr') or st.session_state.unified_workflow_ocr is None:
+        st.error("❌ OCR統合ワークフローが初期化されていません。ページを再読み込みしてください。")
+        st.session_state.is_ocr_testing = False
+        return
+    
+    workflow = st.session_state.unified_workflow_ocr
+    
+    try:
+        with st.spinner("統一OCRテストワークフローで処理中..."):
+            # Google Driveからファイル一覧取得
+            from infrastructure.storage.google_drive_helper import get_google_drive
+            drive_manager = get_google_drive()
+            
+            if not drive_manager:
+                st.error("Google Drive接続に失敗しました")
+                return
+            
+            # PDFファイル一覧取得（修正済みOCRテストヘルパーを使用）
+            from utils.ocr_test_helper import OCRTestManager
+            ocr_manager = OCRTestManager(drive_manager, None, None)
+            pdf_files = ocr_manager.get_drive_pdfs(folder_id)
+            
+            if not pdf_files or len(pdf_files) == 0:
+                st.error("指定フォルダにPDFファイルが見つかりません")
+                return
+            
+            # ファイル数制限
+            if max_files != -1 and len(pdf_files) > max_files:
+                pdf_files = pdf_files[:max_files]
+            
+            st.info(f"📊 {len(pdf_files)}件のPDFファイルでテストを開始します")
+            
+            # バッチ処理用データ準備（修正されたdownload_fileメソッドを使用）
+            files_data = []
+            for pdf_file in pdf_files:
+                try:
+                    # 修正済みのdownload_fileメソッドを使用
+                    file_data = drive_manager.download_file(pdf_file['id'])
+                    if file_data:
+                        files_data.append({
+                            'data': file_data,
+                            'filename': pdf_file['name']
+                        })
+                        logger.info(f"✅ ファイルダウンロード成功: {pdf_file['name']}")
+                    else:
+                        logger.error(f"❌ ファイルダウンロード失敗: {pdf_file['name']}")
+                except Exception as e:
+                    logger.error(f"ファイルダウンロードエラー {pdf_file['name']}: {e}")
+                    continue
+            
+            if not files_data:
+                st.error("PDFファイルのダウンロードに失敗しました")
+                return
+            
+            st.info(f"🎯 {len(files_data)}件のファイルダウンロード完了")
+            
+            # 検証設定
+            validation_config = {
+                'strict_mode': test_mode == "精度重視",
+                'include_detailed_validation': include_validation,
+                'test_mode': test_mode
+            }
+            
+            # 統一ワークフローでバッチ処理実行
+            import asyncio
+            result = asyncio.run(workflow.process_batch_files(
+                files_data,
+                mode=ProcessingMode.OCR_TEST,
+                prompt_key=prompt_key,
+                validation_config=validation_config
+            ))
+            
+            st.session_state.ocr_test_results = [result]
+        
+        st.success("✅ 統一OCRテストが完了しました！")
+        
+    except Exception as e:
+        st.error(f"統一OCRテストエラー: {e}")
+        logger.error(f"統一OCRテストエラー: {e}")
+        
+        # エラー結果を保存
+        st.session_state.ocr_test_results = [{
+            'error': str(e),
+            'status': 'failed',
+            'processed_at': datetime.now().isoformat()
+        }]
+    
+    finally:
+        st.session_state.is_ocr_testing = False
+
+
+
 def main():
     """メインアプリケーション"""
     
@@ -2534,6 +2839,9 @@ def main():
     
     # デバッグパネルの表示
     render_debug_panel()
+    
+    # セッション状態の初期化
+    initialize_session_state()
     
     # タイトル
     st.title("📄 請求書処理自動化システム")

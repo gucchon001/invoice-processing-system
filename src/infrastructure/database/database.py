@@ -217,8 +217,9 @@ class DatabaseManager:
             # 完全なデータマッピング（新しいカラム構造対応・JST時間対応）
             insert_data = {
                 # 基本情報
-                'user_email': invoice_data.get('created_by', ''),
+                'user_email': invoice_data.get('user_email', invoice_data.get('created_by', '')),
                 'file_name': invoice_data.get('file_name', ''),
+                'file_id': invoice_data.get('file_id', ''),  # 必須項目追加
                 'status': 'extracted',  # シンプルなステータス
                 
                 # JST時間を明示的に設定
@@ -257,7 +258,11 @@ class DatabaseManager:
                 'file_size': invoice_data.get('file_size'),
                 
                 # AIモデル情報
-                'gemini_model': 'gemini-2.0-flash-exp'
+                'gemini_model': 'gemini-2.0-flash-exp',
+                
+                # JST時間の明示的設定
+                'created_at': jst_now,
+                'updated_at': jst_now
             }
             
             # Noneや空文字列のフィールドを除去（Supabaseエラー回避）

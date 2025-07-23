@@ -4,46 +4,12 @@
 PDF → AI抽出 → DB保存の統合処理を管理するユースケースクラス
 """
 
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, Any, Optional, Callable
-from enum import Enum
 import logging
+from core.models.workflow_models import WorkflowStatus, WorkflowProgress, WorkflowResult
 
 logger = logging.getLogger(__name__)
-
-
-class WorkflowStatus(Enum):
-    """ワークフロー処理状態"""
-    PENDING = "pending"
-    UPLOADING = "uploading"
-    PROCESSING = "processing"
-    SAVING = "saving"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-
-@dataclass
-class WorkflowProgress:
-    """ワークフロー進捗情報"""
-    status: WorkflowStatus
-    step: str
-    progress_percent: int
-    message: str
-    timestamp: datetime
-    details: Optional[Dict[str, Any]] = None
-
-
-@dataclass
-class WorkflowResult:
-    """ワークフロー処理結果"""
-    success: bool
-    invoice_id: Optional[int] = None
-    extracted_data: Optional[Dict[str, Any]] = None
-    file_info: Optional[Dict[str, str]] = None
-    error_message: Optional[str] = None
-    processing_time: Optional[float] = None
-    progress_history: Optional[list] = None
 
 
 class InvoiceProcessingWorkflow:
