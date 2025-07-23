@@ -129,14 +129,45 @@ class GoogleDriveManager:
         Returns:
             アップロード結果辞書 {'file_id': str, 'file_url': str} または None
         """
+        import time
+        import signal
+        from contextlib import contextmanager
+        
+        @contextmanager
+        def timeout_handler(seconds):
+            """タイムアウトハンドラー"""
+            def timeout_signal(signum, frame):
+                raise TimeoutError(f"Google Drive APIがタイムアウトしました ({seconds}秒)")
+            
+            # Windowsではsignalが制限されているため、try-except使用
+            try:
+                if hasattr(signal, 'SIGALRM'):
+                    old_handler = signal.signal(signal.SIGALRM, timeout_signal)
+                    signal.alarm(seconds)
+                yield
+            except Exception:
+                # Windows環境ではタイムアウト制御なしで続行
+                yield
+            finally:
+                if hasattr(signal, 'SIGALRM'):
+                    signal.alarm(0)
+                    signal.signal(signal.SIGALRM, old_handler)
+        
+        start_time = time.time()
+        
         try:
+            logger.info(f"🔄 Google Driveアップロード開始: {filename} ({len(file_content)} bytes)")
+            
             # フォルダIDの決定
             target_folder_id = folder_id or self.default_folder_id
+            logger.info(f"📁 アップロード先フォルダID: {target_folder_id}")
             
             # ファイルメタデータ
             file_metadata = {'name': filename}
             if target_folder_id:
                 file_metadata['parents'] = [target_folder_id]
+            
+            logger.info(f"📋 ファイルメタデータ: {file_metadata}")
             
             # ファイルコンテンツ
             media = MediaIoBaseUpload(
@@ -145,20 +176,33 @@ class GoogleDriveManager:
                 resumable=True
             )
             
-            # 共有ドライブ対応: supportsAllDrives=true を追加
-            file = self.service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id',
-                supportsAllDrives=True
-            ).execute()
+            logger.info(f"📤 メディアアップロード準備完了: {mime_type}")
+            
+            # タイムアウト制御付きでAPI呼び出し
+            with timeout_handler(30):  # 30秒タイムアウト
+                logger.info("🌐 Google Drive API呼び出し開始...")
+                
+                # 共有ドライブ対応: supportsAllDrives=true を追加
+                file = self.service.files().create(
+                    body=file_metadata,
+                    media_body=media,
+                    fields='id',
+                    supportsAllDrives=True
+                ).execute()
+                
+                logger.info("🌐 Google Drive API呼び出し完了")
             
             file_id = file.get('id')
+            
+            if not file_id:
+                raise Exception("Google Drive APIからファイルIDが取得できませんでした")
             
             # ファイルURLを生成
             file_url = f"https://drive.google.com/file/d/{file_id}/view"
             
-            logger.info(f"ファイルアップロード成功（共有ドライブ）: {filename} (ID: {file_id})")
+            elapsed_time = time.time() - start_time
+            logger.info(f"✅ ファイルアップロード成功（共有ドライブ）: {filename}")
+            logger.info(f"📊 アップロード詳細: ID={file_id}, 時間={elapsed_time:.2f}秒")
             
             return {
                 'file_id': file_id,
@@ -166,8 +210,17 @@ class GoogleDriveManager:
                 'filename': filename
             }
             
+        except TimeoutError as e:
+            elapsed_time = time.time() - start_time
+            error_msg = f"Google Drive APIタイムアウト: {e} (経過時間: {elapsed_time:.2f}秒)"
+            logger.error(f"⏰ {error_msg}")
+            raise Exception(error_msg)
+            
         except Exception as e:
-            logger.error(f"ファイルアップロードでエラー: {e}")
+            elapsed_time = time.time() - start_time
+            error_msg = f"ファイルアップロードでエラー: {e} (経過時間: {elapsed_time:.2f}秒)"
+            logger.error(f"❌ {error_msg}")
+            logger.error(f"🔍 デバッグ情報: ファイル名={filename}, サイズ={len(file_content)}bytes, MIME={mime_type}")
             return None
     
     def get_file_info(self, file_id: str) -> Optional[Dict[str, Any]]:

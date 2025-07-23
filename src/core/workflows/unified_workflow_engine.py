@@ -159,7 +159,18 @@ class UnifiedWorkflowEngine:
         )
         
         try:
-            logger.info(f"📤 統一アップロード開始: {filename}")
+            logger.info(f"📤 統一アップロード開始: {filename} ({len(pdf_file_data)} bytes)")
+            
+            # Google Drive APIの呼び出し（完全同期処理）
+            logger.info("🌐 Google Drive APIサービス取得中...")
+            
+            if not self.storage_service:
+                raise Exception("Google Drive APIサービスが初期化されていません")
+            
+            logger.info("🌐 Google Drive APIサービス確認完了")
+            
+            # アップロード実行（タイムアウト制御付き）
+            logger.info("📤 ファイルアップロード実行開始...")
             
             file_info = self.storage_service.upload_file(
                 file_content=pdf_file_data,
@@ -168,23 +179,50 @@ class UnifiedWorkflowEngine:
                 mime_type="application/pdf"
             )
             
-            if not file_info:
-                raise Exception("ファイルアップロードに失敗しました")
+            logger.info(f"📤 ファイルアップロード実行完了: {file_info}")
             
-            logger.info(f"📤 統一アップロード完了: {file_info.get('file_id')}")
+            if not file_info:
+                raise Exception("Google Drive APIからの戻り値がNoneです")
+            
+            if not file_info.get('file_id'):
+                raise Exception(f"ファイルIDが取得できませんでした: {file_info}")
+            
+            # 成功時の詳細ログ
+            file_id = file_info.get('file_id')
+            file_url = file_info.get('file_url', '')
+            
+            logger.info(f"✅ 統一アップロード成功: {filename}")
+            logger.info(f"📊 アップロード結果: ID={file_id}, URL={file_url}")
             
             self._notify_progress(
                 WorkflowStatus.UPLOADING,
                 "ファイルアップロード",
                 30,
-                f"アップロード完了: {file_info.get('filename', filename)}"
+                f"アップロード完了: {filename}"
             )
             
             return file_info
             
         except Exception as e:
-            logger.error(f"❌ 統一アップロードエラー: {e}")
-            raise Exception(f"統一ファイルアップロードに失敗しました: {e}")
+            error_msg = f"統一ファイルアップロードに失敗しました: {str(e)}"
+            logger.error(f"❌ {error_msg}")
+            logger.exception("統一アップロード詳細エラー:")
+            
+            # エラー時の進捗通知
+            self._notify_progress(
+                WorkflowStatus.FAILED,
+                "ファイルアップロードエラー",
+                10,
+                f"アップロード失敗: {str(e)}",
+                details={
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "filename": filename,
+                    "file_size": len(pdf_file_data)
+                }
+            )
+            
+            raise Exception(error_msg)
     
     def _unified_ai_extraction(self, pdf_file_data: bytes, filename: str) -> Dict[str, Any]:
         """統一AI情報抽出処理"""

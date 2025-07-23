@@ -459,8 +459,9 @@ def render_integrated_workflow_test_page():
 def execute_integrated_workflow(uploaded_file, user_id):
     """統合ワークフロー実行（統一エンジン版）"""
     
-    # 進捗コールバック関数
+    # 進捗コールバック関数（簡素化版）
     def progress_callback(progress: WorkflowProgress):
+        # セッション状態に保存のみ（st.rerun()を削除）
         st.session_state.workflow_progress.append({
             'status': progress.status.value,
             'step': progress.step,
@@ -469,14 +470,18 @@ def execute_integrated_workflow(uploaded_file, user_id):
             'timestamp': progress.timestamp.strftime("%H:%M:%S"),
             'details': progress.details
         })
-        # リアルタイム更新のためのrerun
-        st.rerun()
+        # リアルタイム更新は削除して処理完了後にのみ更新
+        logger.info(f"📊 進捗更新: {progress.step} ({progress.progress_percent}%) - {progress.message}")
     
     try:
+        logger.info(f"🚀 統合ワークフローテスト開始: {uploaded_file.name}")
+        
         # サービスの初期化
         ai_service = get_gemini_api()
         storage_service = get_google_drive()
         database_service = get_database()
+        
+        logger.info("🔧 サービス初期化完了")
         
         # 統一ワークフローエンジン作成
         from core.workflows.unified_workflow_engine import UnifiedWorkflowEngine
@@ -488,12 +493,18 @@ def execute_integrated_workflow(uploaded_file, user_id):
             progress_callback=progress_callback
         )
         
+        logger.info("🔧 統一ワークフローエンジン作成完了")
+        
         # PDFデータ取得
         pdf_data = uploaded_file.read()
         filename = uploaded_file.name
         
-        # 統一ワークフロー実行
+        logger.info(f"📄 PDFデータ取得完了: {filename} ({len(pdf_data)} bytes)")
+        
+        # 統一ワークフロー実行（同期処理）
+        logger.info("🎯 統一ワークフロー実行開始")
         result = engine.process_single_file(pdf_data, filename, user_id, mode="test")
+        logger.info(f"🎯 統一ワークフロー実行完了: 成功={result.success}")
         
         # 結果をセッション状態に保存
         st.session_state.workflow_result = {
@@ -505,15 +516,26 @@ def execute_integrated_workflow(uploaded_file, user_id):
             'processing_time': result.processing_time
         }
         
+        # 処理完了後に一度だけUI更新
+        logger.info("✅ 統合ワークフローテスト完了 - UI更新実行")
+        st.rerun()
+        
     except Exception as e:
-        logger.error(f"統一ワークフロー実行エラー: {e}")
+        error_msg = f"統一ワークフロー実行エラー: {str(e)}"
+        logger.error(f"❌ {error_msg}")
+        logger.exception("統合ワークフローテスト詳細エラー:")
+        
         st.session_state.workflow_result = {
             'success': False,
-            'error_message': f"統一ワークフロー実行エラー: {str(e)}"
+            'error_message': error_msg
         }
+        
+        # エラー時もUI更新
+        st.rerun()
     
     finally:
         st.session_state.is_processing = False
+        logger.info("🔄 処理状態リセット完了")
 
 
 def render_workflow_progress():
