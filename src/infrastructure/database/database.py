@@ -73,12 +73,9 @@ class DatabaseManager:
             logger.error(f"📊 最近の請求書データ取得でエラー: {e}")
             return []
     
-    def create_tables(self) -> bool:
-        """必要なテーブルを作成する"""
+    def check_tables_exist(self) -> bool:
+        """必要なテーブルの存在確認"""
         try:
-            # SQL文でテーブル作成
-            # 注意: Supabaseではテーブル作成はWeb UIで行うのが一般的
-            # ここではテーブル存在確認のみ行う
             tables_to_check = [
                 'users',
                 'invoices', 
@@ -87,15 +84,98 @@ class DatabaseManager:
                 'user_preferences'
             ]
             
+            existing_tables = []
+            missing_tables = []
+            
             for table in tables_to_check:
                 try:
                     result = self.supabase.table(table).select('*').limit(1).execute()
-                    logger.info(f"テーブル '{table}' 存在確認済み")
+                    existing_tables.append(table)
+                    logger.info(f"✅ テーブル '{table}' 存在確認済み")
                 except Exception as e:
-                    logger.warning(f"テーブル '{table}' が存在しません: {e}")
-                    st.warning(f"テーブル '{table}' を手動で作成する必要があります")
+                    missing_tables.append(table)
+                    logger.warning(f"❌ テーブル '{table}' が存在しません: {e}")
             
-            return True
+            # 結果をStreamlitに表示
+            if existing_tables:
+                st.success(f"✅ 存在するテーブル: {', '.join(existing_tables)}")
+            
+            if missing_tables:
+                st.warning(f"⚠️ 不足しているテーブル: {', '.join(missing_tables)}")
+                st.info("不足しているテーブルはSupabase Web UIで手動作成してください。")
+            
+            # すべてのテーブルが存在する場合のみTrue
+            return len(missing_tables) == 0
+        except Exception as e:
+            logger.error(f"テーブル存在確認でエラー: {e}")
+            st.error(f"テーブル確認中にエラーが発生しました: {e}")
+            return False
+    
+    def get_sample_data(self) -> List[Dict[str, Any]]:
+        """サンプルデータを取得（テスト用）"""
+        try:
+            # 各テーブルから少量のサンプルデータを取得
+            sample_data = []
+            
+            # invoicesテーブルからサンプル取得
+            try:
+                invoices_result = self.supabase.table('invoices').select('id,file_name,issuer_name,created_at').limit(3).execute()
+                invoices_data = invoices_result.data if invoices_result.data else []
+                
+                for invoice in invoices_data:
+                    sample_data.append({
+                        'table': 'invoices',
+                        'id': invoice.get('id'),
+                        'description': f"請求書: {invoice.get('file_name', 'N/A')} (発行者: {invoice.get('issuer_name', 'N/A')})",
+                        'created_at': invoice.get('created_at', 'N/A')
+                    })
+            except Exception as e:
+                logger.warning(f"invoicesテーブルのサンプル取得に失敗: {e}")
+            
+            # usersテーブルからサンプル取得
+            try:
+                users_result = self.supabase.table('users').select('email,name,role,created_at').limit(3).execute()
+                users_data = users_result.data if users_result.data else []
+                
+                for user in users_data:
+                    sample_data.append({
+                        'table': 'users',
+                        'id': user.get('email'),
+                        'description': f"ユーザー: {user.get('name', 'N/A')} ({user.get('role', 'N/A')})",
+                        'created_at': user.get('created_at', 'N/A')
+                    })
+            except Exception as e:
+                logger.warning(f"usersテーブルのサンプル取得に失敗: {e}")
+            
+            # payment_mastersテーブルからサンプル取得
+            try:
+                masters_result = self.supabase.table('payment_masters').select('id,company_name,approval_status,created_at').limit(3).execute()
+                masters_data = masters_result.data if masters_result.data else []
+                
+                for master in masters_data:
+                    sample_data.append({
+                        'table': 'payment_masters',
+                        'id': master.get('id'),
+                        'description': f"支払マスタ: {master.get('company_name', 'N/A')} (ステータス: {master.get('approval_status', 'N/A')})",
+                        'created_at': master.get('created_at', 'N/A')
+                    })
+            except Exception as e:
+                logger.warning(f"payment_mastersテーブルのサンプル取得に失敗: {e}")
+            
+            logger.info(f"サンプルデータ取得成功: {len(sample_data)}件")
+            return sample_data
+            
+        except Exception as e:
+            logger.error(f"サンプルデータ取得でエラー: {e}")
+            return []
+
+    def create_tables(self) -> bool:
+        """必要なテーブルを作成する"""
+        try:
+            # SQL文でテーブル作成
+            # 注意: Supabaseではテーブル作成はWeb UIで行うのが一般的
+            # ここではテーブル存在確認のみ行う
+            return self.check_tables_exist()
         except Exception as e:
             logger.error(f"テーブル作成チェックでエラー: {e}")
             return False

@@ -120,11 +120,14 @@ def run_text_generation_test():
             gemini_api = get_gemini_api()
             
             test_prompt = "日本の首都はどこですか？簡潔に答えてください。"
-            response = gemini_api.generate_text_simple(test_prompt)
+            response = gemini_api.generate_text(test_prompt)
             
-            st.success("✅ テキスト生成成功！")
-            st.markdown("**生成結果:**")
-            st.info(response)
+            if response:
+                st.success("✅ テキスト生成成功！")
+                st.markdown("**生成結果:**")
+                st.info(response)
+            else:
+                st.error("❌ Gemini APIからの応答がありませんでした")
             
     except Exception as e:
         st.error(f"テキスト生成エラー: {e}")
@@ -159,8 +162,8 @@ def run_pdf_analysis(uploaded_file):
             basic_prompt = "このPDFの内容を要約してください。"
             
             analysis_result = gemini_api.analyze_pdf_content(
-                pdf_data=pdf_data,
-                prompt=basic_prompt
+                pdf_data,
+                basic_prompt
             )
             
             st.success("✅ PDF分析完了！")
@@ -244,18 +247,26 @@ def run_drive_upload_test(uploaded_file, folder_id=None):
             filename = uploaded_file.name
             
             # アップロード実行
-            file_id = drive_manager.upload_file(
-                file_data=file_data,
+            result = drive_manager.upload_file(
+                file_content=file_data,
                 filename=filename,
                 folder_id=folder_id
             )
             
-            if file_id:
-                st.success(f"✅ アップロード成功！ファイルID: {file_id}")
+            if result and result.get('file_id'):
+                file_id = result['file_id']
+                file_url = result.get('file_url', '')
+                
+                st.success(f"✅ アップロード成功！")
+                st.info(f"📄 ファイル名: {filename}")
+                st.info(f"🆔 ファイルID: {file_id}")
+                if file_url:
+                    st.info(f"🔗 ファイルURL: {file_url}")
                 
                 # ファイル情報表示
                 file_info = drive_manager.get_file_info(file_id)
                 if file_info:
+                    st.markdown("### 📋 詳細ファイル情報")
                     st.json(file_info)
             else:
                 st.error("❌ アップロード失敗")
@@ -285,12 +296,18 @@ def render_aggrid_test_page():
             # サンプルデータをag-gridで表示
             df = pd.DataFrame(sample_data)
             
-            response = aggrid_manager.display_invoice_grid(df)
+            # 基本的なag-gridを作成・表示
+            response = aggrid_manager.create_basic_grid(
+                df, 
+                editable_columns=['status', 'amount'], 
+                selection_mode='multiple'
+            )
             
             # 選択結果の表示
-            if response['selected_rows']:
+            selected_rows = aggrid_manager.get_selected_rows(response)
+            if selected_rows:
                 st.subheader("📝 選択された行")
-                st.json(response['selected_rows'])
+                st.json(selected_rows)
                 
         else:
             st.error("❌ ag-gridマネージャーの初期化に失敗しました")
@@ -440,7 +457,7 @@ def render_integrated_workflow_test_page():
 
 
 def execute_integrated_workflow(uploaded_file, user_id):
-    """統合ワークフロー実行"""
+    """統合ワークフロー実行（統一エンジン版）"""
     
     # 進捗コールバック関数
     def progress_callback(progress: WorkflowProgress):
@@ -461,8 +478,10 @@ def execute_integrated_workflow(uploaded_file, user_id):
         storage_service = get_google_drive()
         database_service = get_database()
         
-        # ワークフローインスタンス作成
-        workflow = InvoiceProcessingWorkflow(
+        # 統一ワークフローエンジン作成
+        from core.workflows.unified_workflow_engine import UnifiedWorkflowEngine
+        
+        engine = UnifiedWorkflowEngine(
             ai_service=ai_service,
             storage_service=storage_service,
             database_service=database_service,
@@ -473,8 +492,8 @@ def execute_integrated_workflow(uploaded_file, user_id):
         pdf_data = uploaded_file.read()
         filename = uploaded_file.name
         
-        # ワークフロー実行
-        result = workflow.process_invoice(pdf_data, filename, user_id)
+        # 統一ワークフロー実行
+        result = engine.process_single_file(pdf_data, filename, user_id, mode="test")
         
         # 結果をセッション状態に保存
         st.session_state.workflow_result = {
@@ -487,9 +506,10 @@ def execute_integrated_workflow(uploaded_file, user_id):
         }
         
     except Exception as e:
+        logger.error(f"統一ワークフロー実行エラー: {e}")
         st.session_state.workflow_result = {
             'success': False,
-            'error_message': f"ワークフロー実行エラー: {str(e)}"
+            'error_message': f"統一ワークフロー実行エラー: {str(e)}"
         }
     
     finally:

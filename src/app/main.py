@@ -12,7 +12,14 @@ from pathlib import Path
 
 # プロジェクトルートをPythonパスに追加
 project_root = Path(__file__).parent.parent  # src/ ディレクトリ
+app_root = Path(__file__).parent  # src/app/ ディレクトリ
 sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(app_root))
+
+# 現在のディレクトリも追加（念のため）
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
 
 # ログ設定の初期化
 try:
@@ -55,23 +62,61 @@ except ImportError as e:
 
 # 分割されたページ・コンポーネントのインポート
 try:
-    from pages.invoice_processing import render_unified_invoice_processing_page
-    from pages.settings import render_dashboard_page, render_settings_page
-    from pages.test_pages import (
-        render_database_test_page, 
-        render_gemini_test_page,
-        render_google_drive_test_page,
-        render_aggrid_test_page,
-        render_integrated_workflow_test_page
-    )
-    from components.sidebar import render_sidebar
+    # デバッグ: 現在のパスとディレクトリ構造を確認
+    import sys
+    import os
+    logger.info(f"現在の作業ディレクトリ: {os.getcwd()}")
+    logger.info(f"__file__の場所: {__file__}")
+    logger.info(f"Pythonパス: {sys.path[:3]}...")  # 最初の3つのパスを表示
+    
+    # 現在のファイルがあるディレクトリ（src/app）を取得
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    logger.info(f"main.pyのディレクトリ: {current_dir}")
+    
+    # pages と components のディレクトリを確認
+    pages_dir = os.path.join(current_dir, 'pages')
+    components_dir = os.path.join(current_dir, 'components')
+    logger.info(f"pagesディレクトリが存在: {os.path.exists(pages_dir)}")
+    logger.info(f"componentsディレクトリが存在: {os.path.exists(components_dir)}")
+    
+    # 現在のディレクトリをPythonパスに追加（確実にするため）
+    if current_dir not in sys.path:
+        sys.path.insert(0, current_dir)
+        logger.info(f"パスに追加: {current_dir}")
+    
+    # インポートを実行
+    import pages.invoice_processing as invoice_processing
+    import pages.settings as settings  
+    import pages.test_pages as test_pages
+    import components.sidebar as sidebar
+    
+    # 関数を明示的に取得
+    render_unified_invoice_processing_page = invoice_processing.render_unified_invoice_processing_page
+    render_dashboard_page = settings.render_dashboard_page
+    render_settings_page = settings.render_settings_page
+    render_database_test_page = test_pages.render_database_test_page
+    render_gemini_test_page = test_pages.render_gemini_test_page
+    render_google_drive_test_page = test_pages.render_google_drive_test_page
+    render_aggrid_test_page = test_pages.render_aggrid_test_page
+    render_integrated_workflow_test_page = test_pages.render_integrated_workflow_test_page
+    render_sidebar = sidebar.render_sidebar
     
     logger.info("分割されたページ・コンポーネントのインポートが完了しました")
     
 except ImportError as e:
     logger.error(f"ページ・コンポーネントのインポートに失敗しました: {e}")
+    logger.error(f"詳細エラー: {type(e).__name__}: {str(e)}")
+    
+    # デバッグ情報をStreamlitにも表示
     st.error(f"ページ・コンポーネントのインポートに失敗しました: {e}")
     st.error("リファクタリング後のモジュール構造を確認してください。")
+    
+    # ディレクトリ構造の確認
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    st.info(f"現在のディレクトリ: {current_dir}")
+    st.info(f"pagesディレクトリが存在: {os.path.exists(os.path.join(current_dir, 'pages'))}")
+    st.info(f"componentsディレクトリが存在: {os.path.exists(os.path.join(current_dir, 'components'))}")
+    
     st.stop()
 
 
@@ -140,6 +185,24 @@ def initialize_session_state():
             except Exception as e:
                 logger.error(f"❌ OCR専用ワークフロー表示マネージャー初期化エラー: {e}")
                 st.session_state.workflow_display_ocr = None
+        
+        # 🚀 統一ワークフローエンジン初期化（新システム）
+        if "unified_engine" not in st.session_state:
+            try:
+                from core.workflows.unified_workflow_engine import UnifiedWorkflowEngine
+                
+                gemini_api = GeminiAPIManager()
+                
+                st.session_state.unified_engine = UnifiedWorkflowEngine(
+                    ai_service=gemini_api,
+                    storage_service=get_google_drive(),
+                    database_service=get_database()
+                )
+                logger.info("✅ 統一ワークフローエンジン初期化完了")
+                
+            except Exception as e:
+                logger.error(f"❌ 統一ワークフローエンジン初期化エラー: {e}")
+                st.session_state.unified_engine = None
         
         # その他のセッション状態初期化
         if "upload_results" not in st.session_state:
@@ -277,10 +340,22 @@ def main():
         
         # フッター
         st.markdown("---")
+        
+        # 安全なファイル行数取得
+        try:
+            with open(__file__, encoding='utf-8') as f:
+                line_count = len(f.readlines())
+        except (UnicodeDecodeError, IOError):
+            try:
+                with open(__file__, encoding='cp932') as f:
+                    line_count = len(f.readlines())
+            except:
+                line_count = "不明"
+        
         st.markdown(
             "<div style='text-align: center; color: gray; font-size: 0.8em;'>"
             "請求書処理自動化システム v2.0 - リファクタリング版 | "
-            f"main.py: {len(open(__file__).readlines())}行 (元: 2879行)"
+            f"main.py: {line_count}行 (元: 2879行)"
             "</div>",
             unsafe_allow_html=True
         )

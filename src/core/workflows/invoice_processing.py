@@ -69,7 +69,7 @@ class InvoiceProcessingWorkflow:
         start_time = datetime.now()
         
         try:
-            # Step 1: ファイルアップロード
+            # Step 1: ファイルアップロード（強化版エラーハンドリング）
             self._notify_progress(
                 WorkflowStatus.UPLOADING, 
                 "ファイルアップロード", 
@@ -77,22 +77,39 @@ class InvoiceProcessingWorkflow:
                 "Google Driveにファイルをアップロード中..."
             )
             
-            file_info = self.storage_service.upload_file(
-                file_content=pdf_file_data,
-                filename=filename,
-                folder_id=None,  # デフォルトフォルダ
-                mime_type="application/pdf"
-            )
-            
-            if not file_info:
-                raise Exception("ファイルアップロードに失敗しました")
-            
-            self._notify_progress(
-                WorkflowStatus.UPLOADING,
-                "ファイルアップロード",
-                30,
-                f"アップロード完了: {file_info.get('filename', filename)}"
-            )
+            try:
+                # タイムアウト制御付きでアップロード実行
+                logger.info(f"🔄 Google Driveアップロード開始: {filename}")
+                
+                file_info = self.storage_service.upload_file(
+                    file_content=pdf_file_data,
+                    filename=filename,
+                    folder_id=None,  # デフォルトフォルダ
+                    mime_type="application/pdf"
+                )
+                
+                logger.info(f"📤 Google Driveアップロード完了: {file_info}")
+                
+                if not file_info:
+                    raise Exception("ファイルアップロードに失敗しました（戻り値がNone）")
+                
+                # アップロード成功の進捗通知
+                uploaded_filename = file_info.get('filename', filename)
+                file_id = file_info.get('file_id', 'unknown')
+                
+                self._notify_progress(
+                    WorkflowStatus.UPLOADING,
+                    "ファイルアップロード",
+                    30,
+                    f"アップロード完了: {uploaded_filename} (ID: {file_id})"
+                )
+                
+                logger.info(f"✅ アップロード成功: {uploaded_filename} -> {file_id}")
+                
+            except Exception as upload_error:
+                logger.error(f"❌ Google Driveアップロードエラー: {upload_error}")
+                logger.exception("アップロード詳細エラー:")
+                raise Exception(f"Google Driveアップロードに失敗しました: {upload_error}")
             
             # 🚨 超緊急デバッグ（7/22）: 30%直後の即座ログ
             # logger.error(f"🔍 DEBUG: 【キャッシュテスト】30%ログ出力完了 - キャッシュがクリアされていれば このメッセージが表示されます")
@@ -100,140 +117,44 @@ class InvoiceProcessingWorkflow:
             # logger.error(f"🔍 DEBUG: 【キャッシュテスト】これから40%に進みます")
             
             # Step 2: AI情報抽出（強化版エラーハンドリング）
-            # 40%通知を復活（コールバック側で制御済み）
             self._notify_progress(
                 WorkflowStatus.PROCESSING,
                 "AI情報抽出", 
                 40,
-                "Gemini APIで請求書情報を抽出中だよ..."
+                "Gemini APIで請求書情報を抽出中..."
             )
             
-            # 🚨 チェックポイント1: 40%ログ出力直後
-            # logger.error(f"🔍 CHECKPOINT-1: 40%ログ出力完了（コールバック制御版テスト）")
-            
-            # デバッグログを簡素化
-            # logger.error(f"🔍 DEBUG: AI処理開始 - PDFサイズ: {len(pdf_file_data)} bytes")
-            
-            # 🚨 チェックポイント2: インポート確認（一時無効化）
-            # logger.error(f"🔍 CHECKPOINT-2: インポート確認開始")
-            # import gc
-            # logger.error(f"🔍 CHECKPOINT-3: gc インポート成功")
-            # import sys
-            # logger.error(f"🔍 CHECKPOINT-4: sys インポート成功")
-            
-            # 🚨 チェックポイント5: 変数確認（一時無効化）
-            # logger.error(f"🔍 CHECKPOINT-5: pdf_file_data変数確認開始")
-            # if pdf_file_data:
-            #     logger.error(f"🔍 CHECKPOINT-6: pdf_file_data存在確認 - タイプ: {type(pdf_file_data)}")
-            #     logger.error(f"🔍 CHECKPOINT-7: pdf_file_dataサイズ確認開始")
-            #     pdf_size_mb = len(pdf_file_data) / 1024 / 1024
-            #     logger.error(f"🔍 CHECKPOINT-8: PDFサイズ計算成功: {pdf_size_mb:.1f} MB")
-            # else:
-            #     logger.error(f"🔍 CHECKPOINT-6: 【警告】pdf_file_dataが存在しません！")
-            
-            # 🚨 超緊急デバッグ（7/22）: 40%直後の即座ログ（一時無効化）
-            # logger.error(f"🔍 DEBUG: 【超重要】40%ログ出力完了 - ここまでは正常")
-            # logger.error(f"🔍 DEBUG: 【超重要】現在のメモリ状況をチェック開始")
-            
-            # メモリ使用量チェック（簡易版）（一時無効化）
-            # try:
-            #     logger.error(f"🔍 DEBUG: 【超重要】Python GCオブジェクト数: {len(gc.get_objects())}")
-            #     
-            #     # PDFデータサイズ確認
-            #     pdf_size_mb = len(pdf_file_data) / 1024 / 1024 if pdf_file_data else 0
-            #     logger.error(f"🔍 DEBUG: 【超重要】PDFファイルサイズ: {pdf_size_mb:.1f} MB")
-            #     
-            #     # 大きすぎるPDFの早期検出
-            #     if pdf_size_mb > 50:
-            #         logger.error(f"🔍 DEBUG: 【警告】PDFサイズが大きすぎます: {pdf_size_mb:.1f} MB")
-            #     elif pdf_size_mb == 0:
-            #         logger.error(f"🔍 DEBUG: 【警告】PDFファイルが空です！")
-            #     else:
-            #         logger.error(f"🔍 DEBUG: 【正常】PDFサイズは適切です: {pdf_size_mb:.1f} MB")
-            #     
-            # except Exception as mem_error:
-            #     logger.error(f"🔍 DEBUG: 【超重要】メモリチェック失敗: {mem_error}")
-            
-            # logger.error(f"🔍 DEBUG: 【超重要】メモリチェック完了 - AI抽出処理に進みます")
-            
-            # 🚨 緊急デバッグ（7/22）: 致命的エラーキャッチ用の広いtry-except
             try:
-                # logger.error(f"🔍 DEBUG: 【重要】AI抽出処理開始前 - メモリ使用量確認")
-                # logger.error(f"🔍 DEBUG: pdf_file_data存在チェック: {pdf_file_data is not None}")
-                # logger.error(f"🔍 DEBUG: pdf_file_dataサイズ: {len(pdf_file_data) if pdf_file_data else 'None'}")
-                # logger.error(f"🔍 DEBUG: ai_service存在チェック: {self.ai_service is not None}")
+                logger.info(f"🤖 AI情報抽出開始: {filename}")
                 
-                # 🚨 緊急デバッグ（7/22）: AI抽出呼び出し前ログ
-                # logger.error(f"🔍 DEBUG: AI抽出サービス呼び出し開始 - ファイルサイズ: {len(pdf_file_data)} bytes")
+                # プロンプト準備
+                from core.services.unified_prompt_manager import UnifiedPromptManager
+                prompt_manager = UnifiedPromptManager()
                 
-                extracted_data = self.ai_service.extract_pdf_invoice_data(pdf_file_data)
+                # 請求書抽出用プロンプトを取得
+                system_prompt, user_prompt = prompt_manager.format_prompt_for_gemini(
+                    "invoice_extractor_prompt", {"filename": filename}
+                )
                 
-                # logger.error(f"🔍 DEBUG: AI抽出サービス呼び出し完了 - 結果: {extracted_data is not None}")
+                # AI処理実行
+                combined_prompt = f"{system_prompt}\n\n{user_prompt}"
+                
+                extracted_data = self.ai_service.analyze_pdf_content(
+                    pdf_file_data,
+                    combined_prompt
+                )
+                
+                logger.info(f"🤖 AI情報抽出完了: {extracted_data}")
                 
                 if not extracted_data:
-                    # 🚨 緊急修正（7/22）: より詳細なエラー情報を提供
-                    self._notify_progress(
-                        WorkflowStatus.FAILED,
-                        "AI情報抽出エラー",
-                        40,
-                        "⚠️ PDF解析に失敗しました",
-                        details={
-                            "error_type": "extraction_failed",
-                            "possible_causes": [
-                                "PDFファイルが破損している可能性があります",
-                                "PDFにページが含まれていない可能性があります", 
-                                "Gemini APIがPDF形式を認識できない可能性があります"
-                            ],
-                            "recommended_actions": [
-                                "PDFファイルを確認してください",
-                                "異なるPDFファイルで再試行してください",
-                                "PDFを再保存または変換してください"
-                            ]
-                        }
-                    )
-                    raise Exception("⚠️ AI情報抽出に失敗しました - PDFファイルを確認してください")
-                
-            except MemoryError as e:
-                # logger.error(f"🔍 DEBUG: 【致命的】メモリ不足エラー: {e}")
-                detailed_error = f"⚠️ メモリ不足: PDFファイルが大きすぎます - {e}"
-                self._notify_progress(
-                    WorkflowStatus.FAILED,
-                    "AI情報抽出エラー",
-                    40,
-                    detailed_error,
-                    details={"error_type": "memory_error", "original_error": str(e)}
-                )
-                raise Exception(detailed_error)
+                    raise Exception("AI情報抽出に失敗しました（戻り値がNone）")
                 
             except Exception as ai_error:
-                # logger.error(f"🔍 DEBUG: 【致命的】AI抽出で予期しないエラー: {ai_error}")
-                # logger.error(f"🔍 DEBUG: エラータイプ: {type(ai_error).__name__}")
-                # import traceback
-                # logger.error(f"🔍 DEBUG: スタックトレース: {traceback.format_exc()}")
-                
-                error_msg = str(ai_error)
-                
-                # エラーメッセージの分類と対処法提示
-                if "no pages" in error_msg.lower():
-                    detailed_error = "⚠️ PDFにページが認識されません - ファイルが破損している可能性があります"
-                elif "400" in error_msg and "document" in error_msg.lower():
-                    detailed_error = "⚠️ PDF形式エラー - Gemini APIがファイルを処理できません"
-                else:
-                    detailed_error = f"⚠️ AI処理エラー: {error_msg}"
-                
-                self._notify_progress(
-                    WorkflowStatus.FAILED,
-                    "AI情報抽出エラー",
-                    40,
-                    detailed_error,
-                    details={
-                        "error_type": "ai_processing_error",
-                        "original_error": error_msg
-                    }
-                )
-                
-                raise Exception(detailed_error)
+                logger.error(f"❌ AI情報抽出エラー: {ai_error}")
+                logger.exception("AI処理詳細エラー:")
+                raise Exception(f"AI情報抽出に失敗しました: {ai_error}")
             
+            # AI処理成功時の進捗通知
             self._notify_progress(
                 WorkflowStatus.PROCESSING,
                 "AI情報抽出",
@@ -242,7 +163,7 @@ class InvoiceProcessingWorkflow:
                 details={"extracted_data": extracted_data}
             )
             
-            # Step 3: データベース保存
+            # Step 3: データベース保存（強化版エラーハンドリング）
             self._notify_progress(
                 WorkflowStatus.SAVING,
                 "データベース保存",
@@ -250,28 +171,33 @@ class InvoiceProcessingWorkflow:
                 "請求書データをデータベースに保存中..."
             )
             
-            # 🔍 デバッグ: テーブルスキーマ確認
-            logger.error(f"🔍 DEBUG: データベース保存前にスキーマ確認を実行")
-            self.database_service.debug_table_schema('invoices')
+            try:
+                logger.info(f"💾 データベース保存開始: {filename}")
+                
+                # 請求書データの準備
+                invoice_record = {
+                    "file_path": file_info.get("file_id", ""),
+                    "file_name": filename,
+                    "extracted_data": extracted_data,
+                    "created_by": user_id,
+                    "status": "extracted"
+                }
+                
+                # データベースに保存
+                save_result = self.database_service.insert_invoice(invoice_record)
+                
+                if not save_result:
+                    raise Exception("データベース保存に失敗しました（戻り値がNone）")
+                
+                invoice_id = save_result.get('id')
+                logger.info(f"💾 データベース保存完了: ID={invoice_id}")
+                
+            except Exception as db_error:
+                logger.error(f"❌ データベース保存エラー: {db_error}")
+                logger.exception("データベース保存詳細エラー:")
+                raise Exception(f"データベース保存に失敗しました: {db_error}")
             
-            # 請求書データの準備（正しいフィールド名使用）
-            invoice_record = {
-                "file_path": file_info.get("file_id", ""),
-                "file_name": filename,
-                "extracted_data": extracted_data,
-                "created_by": user_id,
-                "status": "extracted"
-            }
-            
-            # データベースに保存
-            save_result = self.database_service.insert_invoice(invoice_record)
-            
-            if not save_result:
-                raise Exception("データベース保存に失敗しました")
-            
-            invoice_id = save_result.get('id')
-            
-            # Step 4: 完了
+            # Step 4: 完了（強化版）
             processing_time = (datetime.now() - start_time).total_seconds()
             
             self._notify_progress(
@@ -281,10 +207,14 @@ class InvoiceProcessingWorkflow:
                 f"請求書処理が完了しました (ID: {invoice_id})",
                 details={
                     "invoice_id": invoice_id,
-                    "processing_time": processing_time
+                    "processing_time": processing_time,
+                    "extracted_data_keys": list(extracted_data.keys()) if extracted_data else []
                 }
             )
             
+            logger.info(f"✅ 統合ワークフロー完了: {filename} -> ID={invoice_id}, 処理時間={processing_time:.2f}秒")
+            
+            # 正常完了時の結果作成
             return WorkflowResult(
                 success=True,
                 invoice_id=invoice_id,

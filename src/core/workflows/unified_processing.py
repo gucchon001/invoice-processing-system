@@ -8,6 +8,7 @@ OCRテスト機能とアップロード機能を統合した
 import logging
 import time
 import uuid
+import json
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Union, Callable
 from pathlib import Path
@@ -230,6 +231,139 @@ class UnifiedProcessingWorkflow:
                 'status': ProcessingStatus.FAILED,
                 'processed_at': get_jst_now()
             }
+
+    def process_batch(self, 
+                     files_data: List[Dict[str, Any]],
+                     mode: str = ProcessingMode.BATCH,
+                     prompt_key: str = None,
+                     include_validation: bool = True,
+                     validation_config: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        バッチファイル処理（同期版）
+        
+        Args:
+            files_data: ファイルデータのリスト
+            mode: 処理モード
+            prompt_key: 使用するプロンプト
+            include_validation: 検証実行フラグ
+            validation_config: 検証設定
+            
+        Returns:
+            バッチ処理結果辞書
+        """
+        # 非同期処理を同期的に実行
+        import asyncio
+        
+        # Streamlit環境での非同期処理対応
+        try:
+            # 既存のイベントループがある場合は新しいループを作成
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(
+                self.process_batch_files(files_data, mode, prompt_key, validation_config)
+            )
+            loop.close()
+            return result
+        except Exception as e:
+            logger.error(f"同期バッチ処理エラー: {e}")
+            # フォールバック: 基本的な同期処理
+            return self._process_batch_sync(files_data, mode, prompt_key, include_validation, validation_config)
+    
+    def _process_batch_sync(self, 
+                           files_data: List[Dict[str, Any]],
+                           mode: str = ProcessingMode.BATCH,
+                           prompt_key: str = None,
+                           include_validation: bool = True,
+                           validation_config: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        同期的なバッチファイル処理（フォールバック）
+        
+        Args:
+            files_data: ファイルデータのリスト
+            mode: 処理モード
+            prompt_key: 使用するプロンプト
+            include_validation: 検証実行フラグ
+            validation_config: 検証設定
+            
+        Returns:
+            バッチ処理結果辞書
+        """
+        session_id = str(uuid.uuid4())
+        
+        try:
+            # セッション開始（同期版）
+            filenames = [f['filename'] for f in files_data]
+            self._start_session_sync(session_id, mode, filenames)
+            
+            # プロンプト準備
+            if not prompt_key:
+                prompt_key = self.prompt_selector.get_recommended_prompt(mode)
+            
+            # 各ファイルを順次処理
+            results = []
+            total_files = len(files_data)
+            
+            for i, file_info in enumerate(files_data, 1):
+                try:
+                    self.notify_progress(
+                        session_id, i, total_files, 
+                        f"処理中: {file_info['filename']}"
+                    )
+                    
+                    # 単一ファイル処理を同期実行
+                    result = self._process_single_file_sync(
+                        file_info['data'],
+                        file_info['filename'],
+                        mode,
+                        prompt_key,
+                        include_validation,
+                        validation_config
+                    )
+                    
+                    results.append(result)
+                    
+                except Exception as e:
+                    logger.error(f"ファイル {file_info['filename']} 処理エラー: {e}")
+                    results.append({
+                        'filename': file_info['filename'],
+                        'error': str(e),
+                        'status': ProcessingStatus.FAILED,
+                        'success': False,
+                        'processing_time': 0
+                    })
+            
+            # バッチ結果集計
+            successful_files = sum(1 for r in results if r.get('success', False))
+            failed_files = total_files - successful_files
+            total_processing_time = sum(r.get('processing_time', 0) for r in results)
+            
+            batch_result = {
+                'session_id': session_id,
+                'mode': mode,
+                'total_files': total_files,
+                'successful_files': successful_files,
+                'failed_files': failed_files,
+                'total_processing_time': total_processing_time,
+                'results': results,
+                'prompt_used': prompt_key,
+                'processed_at': get_jst_now(),
+                'status': ProcessingStatus.COMPLETED
+            }
+            
+            self._complete_session_sync(session_id, batch_result)
+            return batch_result
+            
+        except Exception as e:
+            logger.error(f"同期バッチ処理エラー: {e}")
+            error_result = {
+                'session_id': session_id,
+                'error': str(e),
+                'status': ProcessingStatus.FAILED,
+                'processed_at': get_jst_now()
+            }
+            
+            self._fail_session_sync(session_id, error_result)
+            return error_result
 
     async def process_batch_files(self, 
                                 files_data: List[Dict[str, Any]],
@@ -779,6 +913,14 @@ class WorkflowDisplayManager:
         self.display.display_file_info(file_info)
     
 
+    def display_batch_results(self, batch_result: Dict[str, Any]):
+        """バッチ処理結果の表示"""
+        import streamlit as st
+        
+        results = batch_result.get('results', [])
+        
+        # バッチサマリーの表示
+        self.batch_display.display_batch_summary(results)
         
         # 各ファイルの要約結果
         st.subheader("📋 ファイル別処理結果")
@@ -1076,4 +1218,146 @@ class WorkflowDisplayManager:
                 st.error(f"明細表示エラー: {str(e)}")
                 st.dataframe(line_items_df, use_container_width=True)
         else:
-            st.info("📋 明細情報: このファイルには明細データがありません") 
+            st.info("📋 明細情報: このファイルには明細データがありません")
+
+
+# 同期処理用の拡張メソッド（UnifiedProcessingWorkflowクラスに追加）
+def _add_sync_methods_to_workflow():
+    """同期処理メソッドをワークフロークラスに動的追加"""
+    
+    def _process_single_file_sync(self, 
+                                 file_data: bytes,
+                                 filename: str,
+                                 mode: str = ProcessingMode.UPLOAD,
+                                 prompt_key: str = None,
+                                 include_validation: bool = True,
+                                 validation_config: Dict[str, Any] = None) -> Dict[str, Any]:
+        """単一ファイルの同期処理"""
+        session_id = str(uuid.uuid4())
+        start_time = time.time()
+        
+        try:
+            # プロンプト準備
+            if not prompt_key:
+                prompt_key = self.prompt_selector.get_recommended_prompt(mode)
+            
+            system_prompt, user_prompt = self.prompt_manager.format_prompt_for_gemini(
+                prompt_key, {"filename": filename}
+            )
+            
+            # AI処理実行（同期）
+            ai_result = self._process_with_gemini_sync(
+                file_data, system_prompt, user_prompt
+            )
+            
+            # データ検証
+            validation_result = {}
+            if include_validation:
+                validation_result = self.validator.validate_invoice_data(
+                    ai_result, 
+                    strict_mode=validation_config.get('strict_mode', False) if validation_config else False
+                )
+            
+            # 処理時間計算
+            processing_time = time.time() - start_time
+            
+            result = {
+                'session_id': session_id,
+                'filename': filename,
+                'mode': mode,
+                'ai_result': ai_result,
+                'validation': validation_result,
+                'prompt_used': prompt_key,
+                'processed_at': get_jst_now(),
+                'processing_time': processing_time,
+                'status': ProcessingStatus.COMPLETED,
+                'success': True
+            }
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"単一ファイル同期処理エラー: {e}")
+            processing_time = time.time() - start_time
+            
+            error_result = {
+                'session_id': session_id,
+                'filename': filename,
+                'error': str(e),
+                'error_details': f"Type: {type(e).__name__}, Message: {str(e)}",
+                'status': ProcessingStatus.FAILED,
+                'processed_at': get_jst_now(),
+                'processing_time': processing_time,
+                'success': False
+            }
+            
+            return error_result
+    
+    def _process_with_gemini_sync(self, 
+                                file_data: bytes, 
+                                system_prompt: str, 
+                                user_prompt: str) -> Dict[str, Any]:
+        """Gemini AIによる同期処理"""
+        try:
+            # 統一プロンプトを結合
+            combined_prompt = f"{system_prompt}\n\n{user_prompt}"
+            
+            # GeminiAPIManagerの同期メソッドを直接呼び出し
+            result = self.gemini_helper.analyze_pdf_content(
+                file_data,
+                combined_prompt
+            )
+            
+            # raw_textフィールドの後処理
+            if result and isinstance(result, dict) and 'raw_text' in result:
+                extracted_json = self._extract_json_from_raw_text(result['raw_text'])
+                if extracted_json:
+                    logger.info("raw_textからJSONデータを正常に抽出しました")
+                    return extracted_json
+                else:
+                    logger.warning("raw_textからJSONの抽出に失敗しました")
+                    return {}
+            
+            return result if result else {}
+        except Exception as e:
+            logger.error(f"Gemini同期処理エラー: {e}")
+            raise
+    
+    def _start_session_sync(self, session_id: str, mode: str, filenames: List[str]):
+        """セッション開始処理（同期版）"""
+        self.active_sessions[session_id] = {
+            'mode': mode,
+            'filenames': filenames,
+            'started_at': get_jst_now(),
+            'status': ProcessingStatus.IN_PROGRESS
+        }
+        
+        logger.info(f"セッション開始: {session_id} (モード: {mode}, ファイル数: {len(filenames)})")
+    
+    def _complete_session_sync(self, session_id: str, result: Dict[str, Any]):
+        """セッション完了処理（同期版）"""
+        if session_id in self.active_sessions:
+            self.active_sessions[session_id]['status'] = ProcessingStatus.COMPLETED
+            self.active_sessions[session_id]['completed_at'] = get_jst_now()
+            self.active_sessions[session_id]['result'] = result
+        
+        logger.info(f"セッション完了: {session_id}")
+    
+    def _fail_session_sync(self, session_id: str, error_result: Dict[str, Any]):
+        """セッション失敗処理（同期版）"""
+        if session_id in self.active_sessions:
+            self.active_sessions[session_id]['status'] = ProcessingStatus.FAILED
+            self.active_sessions[session_id]['failed_at'] = get_jst_now()
+            self.active_sessions[session_id]['error'] = error_result
+        
+        logger.error(f"セッション失敗: {session_id}")
+    
+    # メソッドをクラスに動的追加
+    UnifiedProcessingWorkflow._process_single_file_sync = _process_single_file_sync
+    UnifiedProcessingWorkflow._process_with_gemini_sync = _process_with_gemini_sync
+    UnifiedProcessingWorkflow._start_session_sync = _start_session_sync
+    UnifiedProcessingWorkflow._complete_session_sync = _complete_session_sync
+    UnifiedProcessingWorkflow._fail_session_sync = _fail_session_sync
+
+# 自動的にメソッドを追加
+_add_sync_methods_to_workflow()

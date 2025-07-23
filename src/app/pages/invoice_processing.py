@@ -52,7 +52,7 @@ def render_production_upload_content():
     """本番アップロードコンテンツ"""
     # プロンプト自動選択（本番アップロードモード）
     prompt_selector = st.session_state.prompt_selector
-    selected_prompt_key = prompt_selector.get_recommended_prompt(ProcessingMode.PRODUCTION)
+    selected_prompt_key = prompt_selector.get_recommended_prompt(ProcessingMode.UPLOAD)
     
     if selected_prompt_key:
         prompt_data = st.session_state.prompt_manager.get_prompt_by_key(selected_prompt_key)
@@ -63,7 +63,7 @@ def render_production_upload_content():
         
         # プロンプト互換性チェック
         is_compatible, warnings = st.session_state.prompt_manager.validate_prompt_compatibility(
-            selected_prompt_key, ProcessingMode.PRODUCTION
+            selected_prompt_key, ProcessingMode.UPLOAD
         )
         if warnings:
             for warning in warnings:
@@ -109,7 +109,7 @@ def render_production_upload_content():
         col1, col2 = st.columns([2, 1])
         
         with col1:
-            if st.button("🚀 統一ワークフロー処理開始", type="primary", use_container_width=True):
+            if st.button("🚀 統一ワークフロー処理開始", type="primary", use_container_width=True, key="production_start_button"):
                 if not selected_prompt_key:
                     st.error("プロンプトが選択されていません")
                 else:
@@ -121,7 +121,7 @@ def render_production_upload_content():
                     )
         
         with col2:
-            if st.button("🔄 リセット", use_container_width=True):
+            if st.button("🔄 リセット", use_container_width=True, key="production_reset_button"):
                 # セッション状態をクリア
                 st.session_state.unified_processing_results = []
                 st.rerun()
@@ -208,7 +208,7 @@ def render_ocr_test_content():
     with col1:
         button_text = f"🚀 統一OCRテスト開始 ({max_files if max_files != -1 else '全'}件)"
         
-        if st.button(button_text, type="primary", use_container_width=True):
+        if st.button(button_text, type="primary", use_container_width=True, key="ocr_test_start_button"):
             if not folder_id:
                 st.error("フォルダIDを入力してください")
             elif not selected_prompt_key:
@@ -225,7 +225,7 @@ def render_ocr_test_content():
                 st.warning("現在テスト実行中です。しばらくお待ちください。")
     
     with col2:
-        if st.button("🔄 リセット", use_container_width=True):
+        if st.button("🔄 リセット", use_container_width=True, key="ocr_test_reset_button"):
             st.session_state.ocr_test_results = []
             st.session_state.is_ocr_testing = False
             st.rerun()
@@ -259,7 +259,7 @@ def execute_unified_upload_processing(uploaded_files, prompt_key, include_valida
             # 統一バッチ処理実行
             batch_result = workflow.process_batch(
                 files_data,
-                mode=ProcessingMode.PRODUCTION,
+                mode=ProcessingMode.UPLOAD,
                 prompt_key=prompt_key,
                 include_validation=include_validation,
                 save_to_database=save_to_db
@@ -328,27 +328,27 @@ def execute_unified_ocr_test(folder_id, prompt_key, max_files, test_mode, includ
                     file_data = drive_manager.download_file(file_info['id'])
                     if file_data:
                         files_data.append({
-                            'filename': file_info['filename'],
+                            'filename': file_info['name'],
                             'data': file_data,
                             'user_id': user_id
                         })
-                        logger.info(f"✅ ファイルダウンロード成功: {file_info['filename']}")
+                        logger.info(f"✅ ファイルダウンロード成功: {file_info['name']}")
                     else:
-                        logger.warning(f"⚠️ ファイルダウンロード失敗: {file_info['filename']}")
+                        logger.warning(f"⚠️ ファイルダウンロード失敗: {file_info['name']}")
                 except Exception as e:
-                    logger.error(f"❌ ファイル処理エラー: {file_info['filename']} - {e}")
+                    logger.error(f"❌ ファイル処理エラー: {file_info['name']} - {e}")
             
             if not files_data:
                 st.error("処理可能なファイルがありませんでした")
                 return
             
-            # 統一バッチ処理実行
+            # 統一バッチ処理実行（同期処理に変更）
             batch_result = workflow.process_batch(
                 files_data,
                 mode=ProcessingMode.OCR_TEST,
                 prompt_key=prompt_key,
                 include_validation=include_validation,
-                save_to_database=False  # OCRテストではDBに保存しない
+                validation_config={'strict_mode': include_validation}
             )
             
             # 結果をセッション状態に保存
@@ -389,4 +389,59 @@ def render_ocr_test_results(include_validation):
     if hasattr(st.session_state, 'workflow_display_ocr') and st.session_state.workflow_display_ocr:
         st.session_state.workflow_display_ocr.display_batch_results(st.session_state.ocr_test_results)
     else:
-        st.error("❌ OCRワークフロー表示マネージャーが初期化されていません") 
+        # フォールバック: 基本的な結果表示
+        st.warning("⚠️ OCRワークフロー表示マネージャーが未初期化です。基本表示を使用します。")
+        render_basic_ocr_results(st.session_state.ocr_test_results, include_validation)
+
+
+def render_basic_ocr_results(results, include_validation):
+    """基本的なOCRテスト結果表示（フォールバック）"""
+    st.markdown("### 📊 OCRテスト結果（基本表示）")
+    
+    if isinstance(results, dict):
+        # バッチ結果の場合
+        batch_result = results
+        total_files = batch_result.get('total_files', 0)
+        successful_files = batch_result.get('successful_files', 0)
+        failed_files = batch_result.get('failed_files', 0)
+        
+        # サマリー表示
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("総ファイル数", total_files)
+        with col2:
+            st.metric("成功", successful_files, delta=None if successful_files == 0 else "✅")
+        with col3:
+            st.metric("失敗", failed_files, delta=None if failed_files == 0 else "❌")
+        
+        # 個別結果表示
+        individual_results = batch_result.get('results', [])
+        if individual_results:
+            st.markdown("### 📋 ファイル別結果")
+            for i, result in enumerate(individual_results, 1):
+                filename = result.get('filename', f'ファイル{i}')
+                success = result.get('success', False)
+                status_icon = "✅" if success else "❌"
+                
+                with st.expander(f"{status_icon} {filename}", expanded=False):
+                    if success:
+                        ai_result = result.get('ai_result', {})
+                        st.json(ai_result)
+                        
+                        if include_validation:
+                            validation = result.get('validation', {})
+                            if validation:
+                                st.markdown("**検証結果:**")
+                                st.json(validation)
+                    else:
+                        error = result.get('error', '不明なエラー')
+                        st.error(f"エラー: {error}")
+        
+    elif isinstance(results, list):
+        # 個別結果のリストの場合
+        for result in results:
+            if result.get('error'):
+                st.error(f"❌ テスト失敗: {result['error']}")
+            else:
+                st.success("✅ OCRテスト完了")
+                st.json(result) 
