@@ -458,7 +458,7 @@ def render_integrated_workflow_test_page():
 
 
 def execute_integrated_workflow(uploaded_file, user_id):
-    """統合ワークフロー実行（統一エンジン版）"""
+    """統合ワークフロー実行（統一エンジンprocess_uploaded_files版）"""
     
     # 進捗コールバック関数（簡素化版）
     def progress_callback(progress: WorkflowProgress):
@@ -477,45 +477,47 @@ def execute_integrated_workflow(uploaded_file, user_id):
     try:
         logger.info(f"🚀 統合ワークフローテスト開始: {uploaded_file.name}")
         
-        # サービスの初期化
-        ai_service = get_gemini_api()
-        storage_service = get_google_drive()
-        database_service = get_database()
+        # セッション状態から統一ワークフローエンジンを取得
+        if 'unified_engine' not in st.session_state:
+            st.error("❌ 統一ワークフローエンジンが初期化されていません")
+            return
         
-        logger.info("🔧 サービス初期化完了")
+        engine = st.session_state.unified_engine
         
-        # 統一ワークフローエンジン作成
-        from core.workflows.unified_workflow_engine import UnifiedWorkflowEngine
+        # 進捗コールバックを設定
+        engine.progress_callback = progress_callback
         
-        engine = UnifiedWorkflowEngine(
-            ai_service=ai_service,
-            storage_service=storage_service,
-            database_service=database_service,
-            progress_callback=progress_callback
-        )
+        logger.info("🔧 統一ワークフローエンジン取得完了")
         
         logger.info("🔧 統一ワークフローエンジン作成完了")
         
-        # PDFデータ取得
-        pdf_data = uploaded_file.read()
-        filename = uploaded_file.name
+        # 統一アップロード処理実行（process_uploaded_files使用）
+        logger.info("🎯 統一アップロード処理開始")
+        batch_result = engine.process_uploaded_files(
+            uploaded_files=[uploaded_file],  # リスト形式で渡す
+            user_id=user_id,
+            mode="test"
+        )
+        logger.info(f"🎯 統一アップロード処理完了")
         
-        logger.info(f"📄 PDFデータ取得完了: {filename} ({len(pdf_data)} bytes)")
-        
-        # 統一ワークフロー実行（同期処理）
-        logger.info("🎯 統一ワークフロー実行開始")
-        result = engine.process_single_file(pdf_data, filename, user_id, mode="test")
-        logger.info(f"🎯 統一ワークフロー実行完了: 成功={result.success}")
-        
-        # 結果をセッション状態に保存
-        st.session_state.workflow_result = {
-            'success': result.success,
-            'invoice_id': result.invoice_id,
-            'extracted_data': result.extracted_data,
-            'file_info': result.file_info,
-            'error_message': result.error_message,
-            'processing_time': result.processing_time
-        }
+        # バッチ結果から単一ファイル結果を抽出
+        if batch_result and batch_result.get('results'):
+            single_result = batch_result['results'][0]  # 最初の結果
+            
+            # 結果をセッション状態に保存
+            st.session_state.workflow_result = {
+                'success': single_result.get('success', False),
+                'invoice_id': single_result.get('invoice_id'),
+                'extracted_data': single_result.get('extracted_data'),
+                'file_info': single_result.get('file_info'),
+                'error_message': single_result.get('error_message'),
+                'processing_time': batch_result.get('processing_time', 0)
+            }
+        else:
+            st.session_state.workflow_result = {
+                'success': False,
+                'error_message': 'バッチ処理結果が取得できませんでした'
+            }
         
         # 処理完了後に一度だけUI更新
         logger.info("✅ 統合ワークフローテスト完了 - UI更新実行")

@@ -247,20 +247,15 @@ def execute_unified_upload_processing(uploaded_files, prompt_key, include_valida
     
     try:
         with st.spinner("統一ワークフローエンジンで処理中..."):
-            # サービスの初期化
-            ai_service = get_gemini_api()
-            storage_service = get_google_drive()
-            database_service = get_database()
+            # セッション状態から統一ワークフローエンジンを取得
+            if 'unified_engine' not in st.session_state:
+                st.error("❌ 統一ワークフローエンジンが初期化されていません")
+                return
             
-            # 統一ワークフローエンジン作成
-            from core.workflows.unified_workflow_engine import UnifiedWorkflowEngine
+            engine = st.session_state.unified_engine
             
-            engine = UnifiedWorkflowEngine(
-                ai_service=ai_service,
-                storage_service=storage_service,
-                database_service=database_service,
-                progress_callback=progress_callback
-            )
+            # 進捗コールバックを設定
+            engine.progress_callback = progress_callback
             
             # 統一アップロード処理実行（Streamlit uploaded files直接処理）
             batch_result = engine.process_uploaded_files(
@@ -298,20 +293,15 @@ def execute_unified_ocr_test(folder_id, prompt_key, max_files, test_mode, includ
     
     try:
         with st.spinner("統一ワークフローエンジンでOCRテスト処理中..."):
-            # サービスの初期化
-            ai_service = get_gemini_api()
-            storage_service = get_google_drive()
-            database_service = get_database()
+            # セッション状態から統一ワークフローエンジンを取得
+            if 'unified_engine' not in st.session_state:
+                st.error("❌ 統一ワークフローエンジンが初期化されていません")
+                return
             
-            # 統一ワークフローエンジン作成
-            from core.workflows.unified_workflow_engine import UnifiedWorkflowEngine
+            engine = st.session_state.unified_engine
             
-            engine = UnifiedWorkflowEngine(
-                ai_service=ai_service,
-                storage_service=storage_service,
-                database_service=database_service,
-                progress_callback=progress_callback
-            )
+            # 進捗コールバックを設定
+            engine.progress_callback = progress_callback
 
             st.info(f"📊 Google Driveフォルダ(ID: {folder_id})内の最大{max_files if max_files !=-1 else '全'}件のPDFファイルでテストを開始します")
             
