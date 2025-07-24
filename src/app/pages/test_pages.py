@@ -138,15 +138,19 @@ def render_pdf_analysis_test():
     """PDF分析テスト"""
     st.markdown("### 📄 PDF分析テスト")
     
-    uploaded_file = st.file_uploader(
-        "テスト用PDFファイルを選択してください",
+    uploaded_files = st.file_uploader(
+        "テスト用PDFファイルを選択してください（複数選択可）",
         type=['pdf'],
+        accept_multiple_files=True,
         key="gemini_pdf_test"
     )
     
-    if uploaded_file is not None:
+    if uploaded_files:
+        st.info(f"📄 {len(uploaded_files)}件のファイルが選択されました")
         if st.button("🔍 PDF分析実行", use_container_width=True):
-            run_pdf_analysis(uploaded_file)
+            for uploaded_file in uploaded_files:
+                st.markdown(f"#### 📄 処理中: {uploaded_file.name}")
+                run_pdf_analysis(uploaded_file)
 
 
 def run_pdf_analysis(uploaded_file):
@@ -217,13 +221,16 @@ def render_drive_upload_test():
     """Google Driveアップロードテスト"""
     st.markdown("### 📤 ファイルアップロードテスト")
     
-    uploaded_file = st.file_uploader(
-        "テスト用ファイルを選択してください",
+    uploaded_files = st.file_uploader(
+        "テスト用ファイルを選択してください（複数選択可）",
         type=['pdf', 'txt', 'json'],
+        accept_multiple_files=True,
         key="drive_upload_test"
     )
     
-    if uploaded_file is not None:
+    if uploaded_files:
+        st.info(f"📄 {len(uploaded_files)}件のファイルが選択されました")
+        
         col1, col2 = st.columns(2)
         
         with col1:
@@ -234,7 +241,9 @@ def render_drive_upload_test():
         
         with col2:
             if st.button("📤 アップロード実行", use_container_width=True):
-                run_drive_upload_test(uploaded_file, folder_id)
+                for uploaded_file in uploaded_files:
+                    st.markdown(f"#### 📤 アップロード中: {uploaded_file.name}")
+                    run_drive_upload_test(uploaded_file, folder_id)
 
 
 def run_drive_upload_test(uploaded_file, folder_id=None):
@@ -409,9 +418,10 @@ def render_integrated_workflow_test_page():
     
     # ファイルアップローダー
     st.markdown("### 📤 PDFファイル選択")
-    uploaded_file = st.file_uploader(
-        "請求書PDFファイルを選択してください",
+    uploaded_files = st.file_uploader(
+        "請求書PDFファイルを選択してください（複数選択可）",
         type=['pdf'],
+        accept_multiple_files=True,
         key="workflow_pdf_uploader"
     )
     
@@ -420,8 +430,14 @@ def render_integrated_workflow_test_page():
     user_id = user_info.get('email', 'test@example.com') if user_info else 'test@example.com'
     
     # 処理実行ボタン
-    if uploaded_file is not None:
+    if uploaded_files:
         st.markdown("### 🚀 ワークフロー実行")
+        
+        # ファイル情報表示
+        st.info(f"📄 選択されたファイル数: {len(uploaded_files)}件")
+        for i, file in enumerate(uploaded_files, 1):
+            st.caption(f"{i}. {file.name}")
+        st.info(f"🆔 ユーザー: {user_id}")
         
         col1, col2 = st.columns([1, 1])
         
@@ -436,7 +452,7 @@ def render_integrated_workflow_test_page():
                 st.session_state.is_processing = True
                 
                 # ワークフロー実行
-                execute_integrated_workflow(uploaded_file, user_id)
+                execute_integrated_workflow(uploaded_files, user_id)
         
         with col2:
             if st.button("🔄 リセット", use_container_width=True):
@@ -457,7 +473,7 @@ def render_integrated_workflow_test_page():
     render_workflow_explanation()
 
 
-def execute_integrated_workflow(uploaded_file, user_id):
+def execute_integrated_workflow(uploaded_files, user_id):
     """統合ワークフロー実行（統一エンジンprocess_uploaded_files版）"""
     
     # 進捗コールバック関数（簡素化版）
@@ -475,7 +491,7 @@ def execute_integrated_workflow(uploaded_file, user_id):
         logger.info(f"📊 進捗更新: {progress.step} ({progress.progress_percent}%) - {progress.message}")
     
     try:
-        logger.info(f"🚀 統合ワークフローテスト開始: {uploaded_file.name}")
+        logger.info(f"🚀 統合ワークフローテスト開始: {len(uploaded_files)}件")
         
         # セッション状態から統一ワークフローエンジンを取得
         if 'unified_engine' not in st.session_state:
@@ -494,7 +510,7 @@ def execute_integrated_workflow(uploaded_file, user_id):
         # 統一アップロード処理実行（process_uploaded_files使用）
         logger.info("🎯 統一アップロード処理開始")
         batch_result = engine.process_uploaded_files(
-            uploaded_files=[uploaded_file],  # リスト形式で渡す
+            uploaded_files=uploaded_files,  # 複数ファイルリストを直接渡す
             user_id=user_id,
             mode="test"
         )
