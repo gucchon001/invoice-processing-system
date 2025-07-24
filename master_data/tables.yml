@@ -1,0 +1,197 @@
+tables:
+  invoices:
+    name: "invoices（請求書メインテーブル）"
+    description: "請求書処理ワークフローの中核となるテーブル。AI抽出データ、ファイル情報、検証結果などを一元管理します。"
+    sql_definition: |
+      CREATE TABLE public.invoices (
+          id SERIAL PRIMARY KEY,
+          user_email VARCHAR(255) NOT NULL REFERENCES users(email),
+          status VARCHAR(50) DEFAULT 'uploaded',
+          file_name VARCHAR(255) NOT NULL,
+          gdrive_file_id VARCHAR(255),
+          uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          issuer_name VARCHAR(255),
+          recipient_name VARCHAR(255),
+          main_invoice_number VARCHAR(255),
+          receipt_number VARCHAR(255),
+          t_number VARCHAR(50),
+          issue_date DATE,
+          due_date DATE,
+          currency VARCHAR(10) DEFAULT 'JPY',
+          total_amount_tax_included DECIMAL(15,2),
+          total_amount_tax_excluded DECIMAL(15,2),
+          key_info JSONB,
+          line_items JSONB,
+          final_accounting_info JSONB,
+          extracted_data JSONB,
+          raw_response JSONB,
+          is_valid BOOLEAN DEFAULT TRUE,
+          validation_errors TEXT[],
+          validation_warnings TEXT[],
+          completeness_score DECIMAL(5,2),
+          processing_time DECIMAL(8,2),
+          file_path VARCHAR(500),
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('Asia/Tokyo', NOW()),
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('Asia/Tokyo', NOW())
+      );
+    columns:
+      - name: "id"
+        type: "SERIAL"
+        constraints: "PRIMARY KEY"
+        description: "請求書一意ID"
+      - name: "user_email"
+        type: "VARCHAR(255)"
+        constraints: "NOT NULL, REFERENCES users(email)"
+        description: "作成ユーザー"
+      - name: "status"
+        type: "VARCHAR(50)"
+        constraints: "DEFAULT 'uploaded'"
+        description: "処理状況（uploaded, processing, extracted, validated, approved, rejected, failed）"
+      - name: "file_name"
+        type: "VARCHAR(255)"
+        constraints: "NOT NULL"
+        description: "元ファイル名"
+      - name: "gdrive_file_id"
+        type: "VARCHAR(255)"
+        constraints: "UNIQUE"
+        description: "Google DriveファイルID"
+      - name: "uploaded_at"
+        type: "TIMESTAMPTZ"
+        constraints: "DEFAULT NOW()"
+        description: "アップロード日時"
+      - name: "issuer_name"
+        type: "VARCHAR(255)"
+        description: "請求書発行者名"
+      - name: "recipient_name"
+        type: "VARCHAR(255)"
+        description: "請求先企業名"
+      - name: "main_invoice_number"
+        type: "VARCHAR(255)"
+        description: "メイン請求書番号"
+      - name: "receipt_number"
+        type: "VARCHAR(255)"
+        description: "受領書番号"
+      - name: "t_number"
+        type: "VARCHAR(50)"
+        description: "適格請求書発行事業者登録番号（T + 13桁）"
+      - name: "issue_date"
+        type: "DATE"
+        description: "請求書発行日"
+      - name: "due_date"
+        type: "DATE"
+        description: "支払期日"
+      - name: "currency"
+        type: "VARCHAR(10)"
+        constraints: "DEFAULT 'JPY'"
+        description: "通貨コード（ISO 4217）"
+      - name: "total_amount_tax_included"
+        type: "DECIMAL(15,2)"
+        description: "税込合計金額"
+      - name: "total_amount_tax_excluded"
+        type: "DECIMAL(15,2)"
+        description: "税抜合計金額"
+      - name: "key_info"
+        type: "JSONB"
+        description: "キー情報（契約番号、サービス期間など）"
+      - name: "line_items"
+        type: "JSONB"
+        description: "明細情報（旧形式との互換性のため）"
+      - name: "final_accounting_info"
+        type: "JSONB"
+        description: "最終経理情報（勘定科目など）"
+      - name: "extracted_data"
+        type: "JSONB"
+        description: "AI抽出データ（統一形式）"
+      - name: "raw_response"
+        type: "JSONB"
+        description: "生のAI応答データ"
+      - name: "is_valid"
+        type: "BOOLEAN"
+        constraints: "DEFAULT TRUE"
+        description: "全体検証結果フラグ"
+      - name: "validation_errors"
+        type: "TEXT[]"
+        description: "検証エラーメッセージ配列"
+      - name: "validation_warnings"
+        type: "TEXT[]"
+        description: "検証警告メッセージ配列"
+      - name: "completeness_score"
+        type: "DECIMAL(5,2)"
+        constraints: "0.00〜100.00"
+        description: "データ完全性スコア（%）"
+      - name: "processing_time"
+        type: "DECIMAL(8,2)"
+        description: "AI処理時間（秒）"
+      - name: "file_path"
+        type: "VARCHAR(500)"
+        description: "ファイルパス（内部管理用）"
+      - name: "created_at"
+        type: "TIMESTAMPTZ"
+        constraints: "DEFAULT timezone('Asia/Tokyo', NOW())"
+        description: "レコード作成日時（JST）"
+      - name: "updated_at"
+        type: "TIMESTAMPTZ"
+        constraints: "DEFAULT timezone('Asia/Tokyo', NOW())"
+        description: "レコード更新日時（JST）"
+    business_rules:
+      - "status値の遷移: uploaded → processing → extracted → validated → approved/rejected"
+      - "extracted_dataは標準構造に準拠する"
+      - "completeness_scoreは必須項目充足率で計算される"
+
+  invoice_line_items:
+    name: "invoice_line_items（請求書明細テーブル）"
+    description: "請求書の明細情報を格納するテーブル。invoicesテーブルと1対多の関係。"
+    sql_definition: |
+      CREATE TABLE public.invoice_line_items (
+          id SERIAL PRIMARY KEY,
+          invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+          line_number INTEGER NOT NULL,
+          item_description TEXT,
+          quantity DECIMAL(10,3),
+          unit_price DECIMAL(15,2),
+          amount DECIMAL(15,2),
+          tax_rate DECIMAL(5,2),
+          created_at TIMESTAMP DEFAULT timezone('Asia/Tokyo', NOW()),
+          updated_at TIMESTAMP DEFAULT timezone('Asia/Tokyo', NOW()),
+          UNIQUE(invoice_id, line_number)
+      );
+    columns:
+      - name: "id"
+        type: "SERIAL"
+        constraints: "PRIMARY KEY"
+        description: "明細一意ID"
+      - name: "invoice_id"
+        type: "INTEGER"
+        constraints: "NOT NULL, REFERENCES invoices(id), ON DELETE CASCADE"
+        description: "請求書ID"
+      - name: "line_number"
+        type: "INTEGER"
+        constraints: "NOT NULL, UNIQUE with invoice_id"
+        description: "請求書内での明細行番号（1から開始）"
+      - name: "item_description"
+        type: "TEXT"
+        description: "商品・サービス名"
+      - name: "quantity"
+        type: "DECIMAL(10,3)"
+        description: "数量（小数点以下3桁まで）"
+      - name: "unit_price"
+        type: "DECIMAL(15,2)"
+        description: "単価"
+      - name: "amount"
+        type: "DECIMAL(15,2)"
+        description: "金額"
+      - name: "tax_rate"
+        type: "DECIMAL(5,2)"
+        constraints: "0.00〜100.00"
+        description: "税率（%）"
+      - name: "created_at"
+        type: "TIMESTAMP"
+        constraints: "DEFAULT timezone('Asia/Tokyo', NOW())"
+        description: "レコード作成日時（JST）"
+      - name: "updated_at"
+        type: "TIMESTAMP"
+        constraints: "DEFAULT timezone('Asia/Tokyo', NOW())"
+        description: "レコード更新日時（JST）"
+    business_rules:
+      - "CASCADE DELETE: 請求書削除時に、関連する全明細も自動削除される"
+      - "金額計算の整合性: amount ≈ quantity × unit_price（丸め誤差を許容）" 
