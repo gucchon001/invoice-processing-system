@@ -290,13 +290,24 @@ class UnifiedWorkflowEngine:
             validator = InvoiceValidator()
             logger.info("✅ InvoiceValidator初期化完了")
             
-            # バリデーション実行（データが正規化される）
+            # 正規化前の状態を記録
+            original_currency = extracted_data.get('currency')
+            logger.info(f"🔍 バリデーション前通貨: {original_currency}")
+            
+            # バリデーション実行（extracted_dataが参照渡しで正規化される）
             logger.info("🔍 バリデーション実行開始...")
             validation_result = validator.validate_invoice_data(extracted_data)
             logger.info("✅ バリデーション実行完了")
             
-            # 正規化されたデータ（extracted_dataは参照渡しで更新されている）
-            validated_data = extracted_data.copy()
+            # バリデーション後の状態を確認
+            final_currency = extracted_data.get('currency')
+            logger.info(f"🔍 バリデーション後通貨: {final_currency}")
+            
+            # 通貨正規化の確認（修正版）
+            if original_currency != final_currency:
+                logger.info(f"💱 通貨正規化: {original_currency} → {final_currency}")
+            else:
+                logger.info(f"💱 通貨確認: {final_currency} (変更なし)")
             
             # バリデーション結果をログ出力
             is_valid = validation_result.get('is_valid', False)
@@ -304,14 +315,6 @@ class UnifiedWorkflowEngine:
             errors = validation_result.get('errors', [])
             
             logger.info(f"🔍 データ検証完了: valid={is_valid}, warnings={len(warnings)}, errors={len(errors)}")
-            
-            # 通貨正規化の確認
-            original_currency = extracted_data.get('currency')
-            final_currency = validated_data.get('currency')
-            if original_currency != final_currency:
-                logger.info(f"💱 通貨正規化: {original_currency} → {final_currency}")
-            else:
-                logger.info(f"💱 通貨確認: {original_currency} (変更なし)")
             
             # 警告・エラーの簡易ログ出力
             if warnings:
@@ -333,7 +336,9 @@ class UnifiedWorkflowEngine:
             )
             
             logger.info("✅ 統一データ検証完了、正規化済みデータを返します")
-            return validated_data
+            
+            # 重要：extracted_dataが既に正規化されているので、そのまま返す
+            return extracted_data  # validated_data = extracted_data.copy() ではなく直接返す
             
         except Exception as e:
             logger.error(f"❌ 統一データ検証エラー: {e}")
