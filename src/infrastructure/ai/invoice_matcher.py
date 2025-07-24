@@ -82,7 +82,7 @@ class InvoiceMatcherService:
 
 {{
     "matched_company": "マッチした企業名",
-    "confidence_score": 0.95,
+  "confidence_score": 0.95,
     "match_reason": "マッチ理由",
     "is_perfect_match": true
 }}
@@ -109,7 +109,7 @@ class InvoiceMatcherService:
         except Exception as e:
             logger.error(f"プロンプトベース企業名照合でエラー: {e}")
             return None
-
+    
     def _extract_json_from_response(self, response: str) -> str:
         """
         Gemini AIレスポンスからJSON部分を抽出
@@ -209,7 +209,7 @@ class InvoiceMatcherService:
         except Exception as e:
             logger.error(f"統合請求書照合でエラー: {e}")
             return None
-
+    
     def extract_invoice_advanced(self, invoice_text: str, 
                                context_info: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
         """
@@ -238,7 +238,7 @@ class InvoiceMatcherService:
                 logger.error(f"抽出プロンプト生成エラー: {e}")
                 # フォールバック処理
                 prompt = self._create_fallback_extraction_prompt(invoice_text)
-                
+            
             # Gemini APIで抽出実行
             ai_result = self.gemini_manager.generate_text(prompt)
             
@@ -250,12 +250,12 @@ class InvoiceMatcherService:
                     return parsed_result
             
             logger.warning("高度情報抽出失敗")
-            return None
-            
+                return None
+                
         except Exception as e:
             logger.error(f"高度請求書情報抽出でエラー: {e}")
             return None
-
+    
     def _post_process_key_info(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         キー情報の後処理・強化

@@ -150,7 +150,7 @@ def render_pdf_analysis_test():
         if st.button("🔍 PDF分析実行", use_container_width=True):
             for uploaded_file in uploaded_files:
                 st.markdown(f"#### 📄 処理中: {uploaded_file.name}")
-                run_pdf_analysis(uploaded_file)
+            run_pdf_analysis(uploaded_file)
 
 
 def run_pdf_analysis(uploaded_file):
@@ -243,7 +243,7 @@ def render_drive_upload_test():
             if st.button("📤 アップロード実行", use_container_width=True):
                 for uploaded_file in uploaded_files:
                     st.markdown(f"#### 📤 アップロード中: {uploaded_file.name}")
-                    run_drive_upload_test(uploaded_file, folder_id)
+                run_drive_upload_test(uploaded_file, folder_id)
 
 
 def run_drive_upload_test(uploaded_file, folder_id=None):
@@ -526,9 +526,9 @@ def execute_integrated_workflow(uploaded_files, user_id):
         # バッチ結果から単一ファイル結果を抽出
         if batch_result and batch_result.get('results'):
             single_result = batch_result['results'][0]  # 最初の結果
-            
-            # 結果をセッション状態に保存
-            st.session_state.workflow_result = {
+        
+        # 結果をセッション状態に保存
+        st.session_state.workflow_result = {
                 'success': single_result.get('success', False),
                 'invoice_id': single_result.get('invoice_id'),
                 'extracted_data': single_result.get('extracted_data'),
@@ -540,7 +540,7 @@ def execute_integrated_workflow(uploaded_files, user_id):
             st.session_state.workflow_result = {
                 'success': False,
                 'error_message': 'バッチ処理結果が取得できませんでした'
-            }
+        }
         
         # 処理完了後に一度だけUI更新
         logger.info("✅ 統合ワークフローテスト完了 - UI更新実行")
