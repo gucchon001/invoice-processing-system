@@ -713,8 +713,8 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
             
             # ag-gridで明細表示
             try:
-                from src.infrastructure.ui.aggrid_helper import AgGridManager
-                aggrid_manager = AgGridManager()
+                from infrastructure.ui.aggrid_helper import get_aggrid_manager
+                aggrid_manager = get_aggrid_manager()
                 aggrid_manager.create_data_grid(
                     line_items_df,
                     editable=False,

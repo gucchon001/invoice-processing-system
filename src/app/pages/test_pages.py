@@ -311,11 +311,13 @@ def render_aggrid_test_page():
             # サンプルデータをag-gridで表示
             df = pd.DataFrame(sample_data)
             
-            # 基本的なag-gridを作成・表示
-            response = aggrid_manager.create_basic_grid(
+            # 汎用データグリッドを作成・表示（統一版）
+            response = aggrid_manager.create_data_grid(
                 df, 
-                editable_columns=['status', 'amount'], 
-                selection_mode='multiple'
+                editable=True,  # 全列編集可能
+                selection_mode='multiple',
+                use_checkbox=True,
+                height=400
             )
             
             # 選択結果の表示

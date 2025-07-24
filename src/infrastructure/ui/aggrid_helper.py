@@ -99,52 +99,7 @@ class AgGridManager:
         
         return pd.DataFrame(data)
     
-    def create_basic_grid(self, data: pd.DataFrame, 
-                         editable_columns: List[str] = None,
-                         selection_mode: str = 'multiple') -> AgGrid:
-        """基本的なag-gridを作成"""
-        
-        gb = GridOptionsBuilder.from_dataframe(data)
-        
-        # 基本設定の適用
-        gb.configure_default_column(
-            resizable=True,
-            sortable=True,
-            filterable=True,
-            flex=1,
-            minWidth=100
-        )
-        
-        # 編集可能列の設定
-        if editable_columns:
-            for col in editable_columns:
-                if col in data.columns:
-                    gb.configure_column(col, editable=True)
-        
-        # 選択モードの設定
-        if selection_mode == 'multiple':
-            gb.configure_selection('multiple', use_checkbox=True)
-        elif selection_mode == 'single':
-            gb.configure_selection('single')
-        
-        # ページネーション設定
-        gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=20)
-        
-        # サイドバー設定は削除（エンタープライズ機能のため）
-        # gb.configure_side_bar()
-        
-        grid_options = gb.build()
-        
-        return AgGrid(
-            data,
-            gridOptions=grid_options,
-            data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-            update_mode=GridUpdateMode.MODEL_CHANGED,
-            fit_columns_on_grid_load=True,
-            enable_enterprise_modules=False,
-            height=400,
-            theme='streamlit'
-        )
+
     
     def create_invoice_editing_grid(self, data: pd.DataFrame) -> AgGrid:
         """請求書編集用の高機能ag-grid作成（完全28カラム対応）"""
