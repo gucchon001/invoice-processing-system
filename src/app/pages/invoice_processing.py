@@ -329,15 +329,150 @@ def execute_unified_ocr_test(folder_id, prompt_key, max_files, test_mode, includ
 
 
 def render_unified_upload_results(include_validation):
-    """統一アップロード結果表示"""
+    """統一アップロード結果表示（WorkflowDisplayManager統合版）"""
     if not st.session_state.unified_processing_results:
         return
     
-    # ワークフロー表示マネージャーを使用して結果表示
-    if hasattr(st.session_state, 'workflow_display') and st.session_state.workflow_display:
-        st.session_state.workflow_display.display_batch_results(st.session_state.unified_processing_results)
+    # 統一ワークフローエンジンの結果を直接表示
+    try:
+        batch_result = st.session_state.unified_processing_results
+        
+        st.markdown("### 📊 バッチ処理結果")
+        
+        # サマリー表示
+        total_files = batch_result.get('total_files', 0)
+        successful_files = batch_result.get('successful_files', 0)
+        failed_files = total_files - successful_files
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("📊 総ファイル数", total_files)
+        
+        with col2:
+            st.metric("✅ 成功", successful_files)
+        
+        with col3:
+            st.metric("❌ 失敗", failed_files)
+        
+        with col4:
+            processing_time = batch_result.get('total_processing_time', 0)
+            st.metric("⏱️ 処理時間", f"{processing_time:.2f}秒")
+        
+        # 成功率表示
+        if total_files > 0:
+            success_rate = (successful_files / total_files) * 100
+            if success_rate >= 90:
+                st.success(f"🎉 成功率: {success_rate:.1f}%")
+            elif success_rate >= 70:
+                st.warning(f"⚠️ 成功率: {success_rate:.1f}%")
+            else:
+                st.error(f"⚠️ 成功率: {success_rate:.1f}%")
+        
+        # 詳細結果表示
+        results = batch_result.get('results', [])
+        if results:
+            st.markdown("### 📋 ファイル別詳細結果")
+            
+            for i, result in enumerate(results, 1):
+                filename = result.get('filename', f'ファイル{i}')
+                success = result.get('success', False)
+                
+                if success:
+                    with st.expander(f"✅ {filename} - 処理成功", expanded=False):
+                        _display_success_result(result)
+                else:
+                    with st.expander(f"❌ {filename} - 処理失敗", expanded=False):
+                        _display_error_result(result)
+                        
+    except Exception as e:
+        logger.error(f"バッチ結果表示エラー: {e}")
+        st.error(f"結果表示エラー: {e}")
+
+
+def _display_success_result(result: Dict[str, Any]):
+    """成功結果の表示（WorkflowDisplayManager統合版）"""
+    st.success("✅ 処理成功")
+    
+    filename = result.get('filename', 'N/A')
+    st.write(f"**ファイル名:** {filename}")
+    
+    processing_time = result.get('processing_time', 0)
+    st.write(f"**処理時間:** {processing_time:.2f}秒")
+    
+    # 抽出データ表示
+    extracted_data = result.get('extracted_data', {})
+    if extracted_data:
+        st.markdown("**📄 抽出された主要情報:**")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write(f"• 供給者名: {extracted_data.get('issuer', 'N/A')}")
+            st.write(f"• 請求書番号: {extracted_data.get('main_invoice_number', 'N/A')}")
+            st.write(f"• 通貨: {extracted_data.get('currency', 'JPY')}")
+            
+        with col2:
+            st.write(f"• 請求先: {extracted_data.get('payer', 'N/A')}")
+            st.write(f"• 税込金額: {extracted_data.get('amount_inclusive_tax', 'N/A')}")
+            st.write(f"• 請求日: {extracted_data.get('issue_date', 'N/A')}")
+    
+    # 検証結果表示
+    validation_result = result.get('validation_result')
+    if validation_result:
+        _display_validation_result(validation_result)
+
+
+def _display_error_result(result: Dict[str, Any]):
+    """エラー結果の表示（WorkflowDisplayManager統合版）"""
+    st.error("❌ 処理失敗")
+    
+    filename = result.get('filename', 'N/A')
+    st.write(f"**ファイル名:** {filename}")
+    
+    # 複数の可能性があるエラーメッセージキーをチェック
+    error_message = (result.get('error_message') or 
+                    result.get('error') or 
+                    result.get('error_details') or 
+                    '詳細不明')
+    st.error(f"エラー内容: {error_message}")
+    
+    # エラー詳細がある場合
+    error_details = result.get('error_details')
+    if error_details:
+        with st.expander("エラー詳細"):
+            st.code(str(error_details))
+
+
+def _display_validation_result(validation_result: Dict[str, Any]):
+    """検証結果の表示（WorkflowDisplayManager統合版）"""
+    st.markdown("**🔍 検証結果:**")
+    
+    is_valid = validation_result.get('is_valid', False)
+    
+    if is_valid:
+        st.success("✅ 検証: 合格")
     else:
-        st.error("❌ ワークフロー表示マネージャーが初期化されていません")
+        st.warning("⚠️ 検証: 注意が必要")
+    
+    # 警告・エラー表示
+    warnings = validation_result.get('warnings', [])
+    errors = validation_result.get('errors', [])
+    
+    if warnings:
+        st.markdown("**⚠️ 警告:**")
+        for warning in warnings:
+            st.warning(f"• {warning}")
+    
+    if errors:
+        st.markdown("**❌ エラー:**")
+        for error in errors:
+            st.error(f"• {error}")
+    
+    # スコア表示
+    score = validation_result.get('score', 0)
+    if score > 0:
+        st.write(f"**📊 品質スコア:** {score:.1f}/100")
 
 
 def render_ocr_test_results(include_validation):
