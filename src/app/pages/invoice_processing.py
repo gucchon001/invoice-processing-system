@@ -15,9 +15,9 @@ sys.path.insert(0, str(project_root))
 try:
     from infrastructure.auth.oauth_handler import get_current_user
     from infrastructure.database.database import get_database
-    from infrastructure.ai.gemini_helper import GeminiAPIManager
+    from infrastructure.ai.gemini_helper import get_gemini_api
     from infrastructure.storage.google_drive_helper import get_google_drive
-    from core.workflows.unified_processing import UnifiedProcessingWorkflow, ProcessingMode
+    from core.models.workflow_models import ProcessingMode
     from core.services.unified_prompt_manager import UnifiedPromptManager
     from core.services.prompt_selector import PromptSelector
     from utils.log_config import get_logger
@@ -236,33 +236,46 @@ def render_ocr_test_content():
 
 
 def execute_unified_upload_processing(uploaded_files, prompt_key, include_validation, save_to_db):
-    """統一ワークフローによる本番アップロード処理"""
+    """統一ワークフローによる本番アップロード処理（UnifiedWorkflowEngine版）"""
     # 現在のユーザー情報取得
     user_info = get_current_user()
     user_id = user_info.get('email', 'test@example.com') if user_info else 'test@example.com'
     
-    # 統一ワークフローの取得
-    workflow = st.session_state.unified_workflow
+    # 進捗コールバック関数
+    def progress_callback(progress):
+        logger.info(f"📊 アップロード進捗: {progress.step} ({progress.progress_percent}%) - {progress.message}")
     
     try:
-        with st.spinner("統一ワークフローで処理中..."):
+        with st.spinner("統一ワークフローエンジンで処理中..."):
+            # サービスの初期化
+            ai_service = get_gemini_api()
+            storage_service = get_google_drive()
+            database_service = get_database()
+            
+            # 統一ワークフローエンジン作成
+            from core.workflows.unified_workflow_engine import UnifiedWorkflowEngine
+            
+            engine = UnifiedWorkflowEngine(
+                ai_service=ai_service,
+                storage_service=storage_service,
+                database_service=database_service,
+                progress_callback=progress_callback
+            )
+            
             # バッチ処理用データ準備
             files_data = []
             for uploaded_file in uploaded_files:
                 pdf_data = uploaded_file.read()
                 files_data.append({
                     'filename': uploaded_file.name,
-                    'data': pdf_data,
-                    'user_id': user_id
+                    'data': pdf_data
                 })
             
-            # 統一バッチ処理実行
-            batch_result = workflow.process_batch(
-                files_data,
-                mode=ProcessingMode.UPLOAD,
-                prompt_key=prompt_key,
-                include_validation=include_validation,
-                save_to_database=save_to_db
+            # 統一バッチ処理実行（成功エンジンのprocess_batch_files使用）
+            batch_result = engine.process_batch_files(
+                files_data=files_data,
+                user_id=user_id,
+                mode="upload"
             )
             
             # 結果をセッション状態に保存
@@ -280,7 +293,7 @@ def execute_unified_upload_processing(uploaded_files, prompt_key, include_valida
 
 
 def execute_unified_ocr_test(folder_id, prompt_key, max_files, test_mode, include_validation):
-    """統一ワークフローによるOCRテスト実行"""
+    """統一ワークフローによるOCRテスト実行（UnifiedWorkflowEngine版）"""
     st.session_state.is_ocr_testing = True
     st.session_state.ocr_test_results = []
     
@@ -288,26 +301,34 @@ def execute_unified_ocr_test(folder_id, prompt_key, max_files, test_mode, includ
     user_info = get_current_user()
     user_id = user_info.get('email', 'test@example.com') if user_info else 'test@example.com'
     
-    # 統一ワークフローの取得（安全性チェック付き）
-    if not hasattr(st.session_state, 'unified_workflow_ocr') or st.session_state.unified_workflow_ocr is None:
-        st.error("❌ OCR統合ワークフローが初期化されていません。ページを再読み込みしてください。")
-        st.session_state.is_ocr_testing = False
-        return
-    
-    workflow = st.session_state.unified_workflow_ocr
+    # 進捗コールバック関数
+    def progress_callback(progress):
+        logger.info(f"📊 OCRテスト進捗: {progress.step} ({progress.progress_percent}%) - {progress.message}")
     
     try:
-        with st.spinner("統一OCRテストワークフローで処理中..."):
-            # Google Driveからファイル一覧取得
-            drive_manager = get_google_drive()
+        with st.spinner("統一ワークフローエンジンでOCRテスト処理中..."):
+            # サービスの初期化
+            ai_service = get_gemini_api()
+            storage_service = get_google_drive()
+            database_service = get_database()
             
-            if not drive_manager:
+            if not storage_service:
                 st.error("Google Drive接続に失敗しました")
                 return
             
+            # 統一ワークフローエンジン作成
+            from core.workflows.unified_workflow_engine import UnifiedWorkflowEngine
+            
+            engine = UnifiedWorkflowEngine(
+                ai_service=ai_service,
+                storage_service=storage_service,
+                database_service=database_service,
+                progress_callback=progress_callback
+            )
+            
             # PDFファイル一覧取得
             from utils.ocr_test_helper import OCRTestManager
-            ocr_manager = OCRTestManager(drive_manager, None, None)
+            ocr_manager = OCRTestManager(storage_service, None, None)
             pdf_files = ocr_manager.get_drive_pdfs(folder_id)
             
             if not pdf_files or len(pdf_files) == 0:
@@ -325,12 +346,11 @@ def execute_unified_ocr_test(folder_id, prompt_key, max_files, test_mode, includ
             for file_info in pdf_files:
                 try:
                     # ファイルダウンロード
-                    file_data = drive_manager.download_file(file_info['id'])
+                    file_data = storage_service.download_file(file_info['id'])
                     if file_data:
                         files_data.append({
                             'filename': file_info['name'],
-                            'data': file_data,
-                            'user_id': user_id
+                            'data': file_data
                         })
                         logger.info(f"✅ ファイルダウンロード成功: {file_info['name']}")
                     else:
@@ -342,13 +362,11 @@ def execute_unified_ocr_test(folder_id, prompt_key, max_files, test_mode, includ
                 st.error("処理可能なファイルがありませんでした")
                 return
             
-            # 統一バッチ処理実行（同期処理に変更）
-            batch_result = workflow.process_batch(
-                files_data,
-                mode=ProcessingMode.OCR_TEST,
-                prompt_key=prompt_key,
-                include_validation=include_validation,
-                validation_config={'strict_mode': include_validation}
+            # 統一バッチ処理実行（成功エンジンのprocess_batch_files使用）
+            batch_result = engine.process_batch_files(
+                files_data=files_data,
+                user_id=user_id,
+                mode="ocr_test"
             )
             
             # 結果をセッション状態に保存
