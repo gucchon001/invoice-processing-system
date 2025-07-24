@@ -109,12 +109,12 @@ def test_infrastructure_components():
     print('=' * 60)
     
     try:
-        # データベースマネージャー
-        from infrastructure.database.database import DatabaseManager
+        # データベースマネージャー（シングルトン）
+        from infrastructure.database.database import get_database
         
-        db_manager = DatabaseManager()
+        db_manager = get_database()
         if db_manager.test_connection():
-            print('✅ DatabaseManager接続成功')
+            print('✅ DatabaseManager接続成功（シングルトン）')
         else:
             print('⚠️ DatabaseManager接続警告')
         

@@ -240,17 +240,8 @@ class DatabaseManager:
             logger.error(f"請求書取得でエラー: {e}")
             return []
     
-    def create_invoice(self, invoice_data: Dict[str, Any]) -> Optional[int]:
-        """新規請求書データを作成"""
-        try:
-            result = self.supabase.table('invoices').insert(invoice_data).execute()
-            if result.data:
-                logger.info(f"請求書作成成功: {result.data[0]['id']}")
-                return result.data[0]['id']
-            return None
-        except Exception as e:
-            logger.error(f"請求書作成でエラー: {e}")
-            return None
+# create_invoice() メソッドは重複のため削除されました
+    # 代わりに insert_invoice() を使用してください
     
     def insert_invoice(self, invoice_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """統合ワークフロー用請求書データ挿入（完全カラム対応・JST時間対応）"""

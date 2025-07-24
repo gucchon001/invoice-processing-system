@@ -29,9 +29,10 @@ class DatabaseTools:
     def connect(self):
         """データベース接続"""
         try:
-            # DatabaseManagerによる接続
-            self.db_manager = DatabaseManager()
-            print("✅ DatabaseManager接続成功")
+            # DatabaseManagerシングルトンによる接続
+            from infrastructure.database.database import get_database
+            self.db_manager = get_database()
+            print("✅ DatabaseManager接続成功（シングルトン）")
             
             # 直接接続も準備（詳細調査用）
             try:

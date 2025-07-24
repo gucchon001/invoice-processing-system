@@ -135,8 +135,9 @@ def main():
     try:
         print("🔍 データベース状況確認...")
         
-        db = DatabaseManager()
-        print("✅ データベース接続成功")
+        from infrastructure.database.database import get_database
+        db = get_database()
+        print("✅ データベース接続成功（シングルトン）")
         
         # extracted_dataカラムの存在確認
         has_extracted_data = check_extracted_data_column(db)

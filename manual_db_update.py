@@ -14,7 +14,8 @@ import json
 def main():
     try:
         print("📊 データベース接続中...")
-        db = DatabaseManager()
+        from infrastructure.database.database import get_database
+        db = get_database()
         
         print("🔧 invoicesテーブルにextracted_dataカラムを追加中...")
         

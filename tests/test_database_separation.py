@@ -29,10 +29,11 @@ class DatabaseSeparationTester:
     def setup(self):
         """テスト環境セットアップ"""
         try:
-            self.db_manager = DatabaseManager()
+            from infrastructure.database.database import get_database
+            self.db_manager = get_database()
             # 接続テスト
             if self.db_manager.test_connection():
-                logger.info("✅ データベース接続成功")
+                logger.info("✅ データベース接続成功（シングルトン）")
                 return True
             else:
                 raise Exception("データベース接続テスト失敗")
