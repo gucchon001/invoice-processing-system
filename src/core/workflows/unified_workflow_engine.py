@@ -96,9 +96,12 @@ class UnifiedWorkflowEngine:
             # Step 2: 統一AI情報抽出処理
             extracted_data = self._unified_ai_extraction(pdf_file_data, filename)
             
+            # Step 2.5: 統一データ検証・正規化処理
+            validated_data = self._unified_data_validation(extracted_data, filename)
+            
             # Step 3: 統一データベース保存処理
             invoice_id = self._unified_database_save(
-                file_info, extracted_data, filename, user_id, mode
+                file_info, validated_data, filename, user_id, mode
             )
             
             # Step 4: 完了処理
@@ -122,7 +125,7 @@ class UnifiedWorkflowEngine:
             return WorkflowResult(
                 success=True,
                 invoice_id=invoice_id,
-                extracted_data=extracted_data,
+                extracted_data=validated_data,
                 file_info=file_info,
                 processing_time=processing_time,
                 progress_history=self.progress_history.copy()
@@ -267,6 +270,68 @@ class UnifiedWorkflowEngine:
         except Exception as e:
             logger.error(f"❌ 統一AI抽出エラー: {e}")
             raise Exception(f"統一AI情報抽出に失敗しました: {e}")
+    
+    def _unified_data_validation(self, extracted_data: Dict[str, Any], filename: str) -> Dict[str, Any]:
+        """統一データ検証・正規化処理"""
+        self._notify_progress(
+            WorkflowStatus.PROCESSING,
+            "データ検証",
+            75,
+            "AI抽出データの検証・正規化を実行中..."
+        )
+        
+        try:
+            logger.info(f"🔍 統一データ検証開始: {filename}")
+            
+            # InvoiceValidatorを使用してデータ検証・正規化
+            from core.services.invoice_validator import InvoiceValidator
+            validator = InvoiceValidator()
+            
+            # バリデーション実行（データが正規化される）
+            validation_result = validator.validate_invoice_data(extracted_data)
+            
+            # 正規化されたデータ（extracted_dataは参照渡しで更新されている）
+            validated_data = extracted_data.copy()
+            
+            # バリデーション結果をログ出力
+            is_valid = validation_result.get('is_valid', False)
+            warnings = validation_result.get('warnings', [])
+            errors = validation_result.get('errors', [])
+            
+            logger.info(f"🔍 データ検証完了: valid={is_valid}, warnings={len(warnings)}, errors={len(errors)}")
+            
+            # 通貨正規化の確認
+            original_currency = extracted_data.get('currency')
+            final_currency = validated_data.get('currency')
+            if original_currency != final_currency:
+                logger.info(f"💱 通貨正規化: {original_currency} → {final_currency}")
+            
+            # 警告・エラーの簡易ログ出力
+            if warnings:
+                logger.warning(f"⚠️ 検証警告({len(warnings)}件): {warnings[:2]}")  # 最初の2件のみ
+            if errors:
+                logger.error(f"❌ 検証エラー({len(errors)}件): {errors[:2]}")  # 最初の2件のみ
+            
+            self._notify_progress(
+                WorkflowStatus.PROCESSING,
+                "データ検証",
+                77,
+                "データ検証・正規化完了",
+                details={
+                    "is_valid": is_valid,
+                    "warnings_count": len(warnings),
+                    "errors_count": len(errors),
+                    "currency_normalized": original_currency != final_currency
+                }
+            )
+            
+            return validated_data
+            
+        except Exception as e:
+            logger.error(f"❌ 統一データ検証エラー: {e}")
+            # 検証に失敗しても処理を継続（元データを返す）
+            logger.warning("⚠️ データ検証失敗、元のデータで処理を継続します")
+            return extracted_data
     
     def _unified_database_save(self, 
                               file_info: Dict[str, Any], 
