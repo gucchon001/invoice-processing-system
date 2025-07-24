@@ -16,7 +16,7 @@ class WorkflowDisplayManager:
     def __init__(self, workflow):
         """
         Args:
-            workflow: UnifiedProcessingWorkflowインスタンス
+            workflow: UnifiedWorkflowEngineインスタンス
         """
         self.workflow = workflow
     
