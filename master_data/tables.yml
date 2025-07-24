@@ -21,7 +21,6 @@ tables:
           total_amount_tax_included DECIMAL(15,2),
           total_amount_tax_excluded DECIMAL(15,2),
           key_info JSONB,
-          line_items JSONB,
           final_accounting_info JSONB,
           extracted_data JSONB,
           raw_response JSONB,
@@ -95,7 +94,7 @@ tables:
         description: "キー情報（契約番号、サービス期間など）"
       - name: "line_items"
         type: "JSONB"
-        description: "明細情報（旧形式との互換性のため）"
+        description: "（廃止予定）明細情報。invoice_line_itemsテーブルに移行。"
       - name: "final_accounting_info"
         type: "JSONB"
         description: "最終経理情報（勘定科目など）"

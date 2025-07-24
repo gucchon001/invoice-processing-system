@@ -312,10 +312,6 @@ def execute_unified_ocr_test(folder_id, prompt_key, max_files, test_mode, includ
             storage_service = get_google_drive()
             database_service = get_database()
             
-            if not storage_service:
-                st.error("Google Drive接続に失敗しました")
-                return
-            
             # 統一ワークフローエンジン作成
             from core.workflows.unified_workflow_engine import UnifiedWorkflowEngine
             
@@ -325,48 +321,14 @@ def execute_unified_ocr_test(folder_id, prompt_key, max_files, test_mode, includ
                 database_service=database_service,
                 progress_callback=progress_callback
             )
+
+            st.info(f"📊 Google Driveフォルダ(ID: {folder_id})内の最大{max_files if max_files !=-1 else '全'}件のPDFファイルでテストを開始します")
             
-            # PDFファイル一覧取得
-            from utils.ocr_test_helper import OCRTestManager
-            ocr_manager = OCRTestManager(storage_service, None, None)
-            pdf_files = ocr_manager.get_drive_pdfs(folder_id)
-            
-            if not pdf_files or len(pdf_files) == 0:
-                st.error("指定フォルダにPDFファイルが見つかりません")
-                return
-            
-            # ファイル数制限
-            if max_files != -1 and len(pdf_files) > max_files:
-                pdf_files = pdf_files[:max_files]
-            
-            st.info(f"📊 {len(pdf_files)}件のPDFファイルでテストを開始します")
-            
-            # バッチ処理用データ準備
-            files_data = []
-            for file_info in pdf_files:
-                try:
-                    # ファイルダウンロード
-                    file_data = storage_service.download_file(file_info['id'])
-                    if file_data:
-                        files_data.append({
-                            'filename': file_info['name'],
-                            'data': file_data
-                        })
-                        logger.info(f"✅ ファイルダウンロード成功: {file_info['name']}")
-                    else:
-                        logger.warning(f"⚠️ ファイルダウンロード失敗: {file_info['name']}")
-                except Exception as e:
-                    logger.error(f"❌ ファイル処理エラー: {file_info['name']} - {e}")
-            
-            if not files_data:
-                st.error("処理可能なファイルがありませんでした")
-                return
-            
-            # 統一バッチ処理実行（成功エンジンのprocess_batch_files使用）
-            batch_result = engine.process_batch_files(
-                files_data=files_data,
+            # 統一エンジンに処理を移管
+            batch_result = engine.process_ocr_test_from_drive(
+                folder_id=folder_id,
                 user_id=user_id,
-                mode="ocr_test"
+                max_files=max_files
             )
             
             # 結果をセッション状態に保存
