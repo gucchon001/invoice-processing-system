@@ -284,11 +284,16 @@ class UnifiedWorkflowEngine:
             logger.info(f"🔍 統一データ検証開始: {filename}")
             
             # InvoiceValidatorを使用してデータ検証・正規化
+            logger.info("📋 InvoiceValidatorインポート開始...")
             from core.services.invoice_validator import InvoiceValidator
+            logger.info("📋 InvoiceValidator初期化開始...")
             validator = InvoiceValidator()
+            logger.info("✅ InvoiceValidator初期化完了")
             
             # バリデーション実行（データが正規化される）
+            logger.info("🔍 バリデーション実行開始...")
             validation_result = validator.validate_invoice_data(extracted_data)
+            logger.info("✅ バリデーション実行完了")
             
             # 正規化されたデータ（extracted_dataは参照渡しで更新されている）
             validated_data = extracted_data.copy()
@@ -305,6 +310,8 @@ class UnifiedWorkflowEngine:
             final_currency = validated_data.get('currency')
             if original_currency != final_currency:
                 logger.info(f"💱 通貨正規化: {original_currency} → {final_currency}")
+            else:
+                logger.info(f"💱 通貨確認: {original_currency} (変更なし)")
             
             # 警告・エラーの簡易ログ出力
             if warnings:
@@ -325,10 +332,12 @@ class UnifiedWorkflowEngine:
                 }
             )
             
+            logger.info("✅ 統一データ検証完了、正規化済みデータを返します")
             return validated_data
             
         except Exception as e:
             logger.error(f"❌ 統一データ検証エラー: {e}")
+            logger.exception("詳細エラー情報:")  # スタックトレースを出力
             # 検証に失敗しても処理を継続（元データを返す）
             logger.warning("⚠️ データ検証失敗、元のデータで処理を継続します")
             return extracted_data
