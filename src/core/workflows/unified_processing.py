@@ -19,7 +19,7 @@ from core.services.unified_prompt_manager import UnifiedPromptManager, PromptSel
 from infrastructure.ui.validation_display import ValidationDisplay, BatchValidationDisplay
 from infrastructure.ai.gemini_helper import GeminiAPIManager
 from infrastructure.database.database import DatabaseManager
-from core.adapters import BaseInputAdapter, LocalFileAdapter, FileData
+# LocalFileAdapter関連は削除（UnifiedWorkflowEngineに統合済み）
 from core.models.workflow_models import ProcessingMode, ProcessingStatus
 
 logger = logging.getLogger(__name__)
@@ -35,8 +35,7 @@ class UnifiedProcessingWorkflow:
     def __init__(self, 
                  gemini_helper: GeminiAPIManager,
                  database_manager: DatabaseManager,
-                 prompts_dir: str = "prompts",
-                 input_adapter: BaseInputAdapter = None):
+                 prompts_dir: str = "prompts"):
         """
         ワークフローシステムの初期化
         
@@ -44,13 +43,9 @@ class UnifiedProcessingWorkflow:
             gemini_helper: Gemini AI処理マネージャー
             database_manager: データベース管理システム
             prompts_dir: プロンプトディレクトリ
-            input_adapter: 入力アダプター（統一インターフェース）
         """
         self.gemini_helper = gemini_helper
         self.database_manager = database_manager
-        
-        # 統一アダプターシステム
-        self.input_adapter = input_adapter or LocalFileAdapter()
         
         # 共通コンポーネントの初期化
         self.validator = InvoiceValidator()
@@ -112,8 +107,14 @@ class UnifiedProcessingWorkflow:
             # AI処理実行
             self.notify_progress(session_id, 1, 3, "AI解析中...")
             
-            ai_result = await self._process_with_gemini(
-                file_data, system_prompt, user_prompt
+            # 統一プロンプトを結合
+            combined_prompt = f"{system_prompt}\n\n{user_prompt}"
+            
+            # GeminiAPIManagerの直接呼び出し（中間レイヤー削除）
+            ai_result = await asyncio.to_thread(
+                self.gemini_helper.analyze_pdf_content,
+                file_data,
+                combined_prompt
             )
             
             # データ検証
@@ -174,64 +175,6 @@ class UnifiedProcessingWorkflow:
             await self._fail_session(session_id, error_result)
             return error_result
     
-    async def process_uploaded_files(self,
-                                   uploaded_files,
-                                   mode: str = ProcessingMode.UPLOAD,
-                                   prompt_key: str = None,
-                                   validation_config: Dict[str, Any] = None) -> Dict[str, Any]:
-        """
-        アップロードファイルの統一処理（新統一インターフェース）
-        
-        Args:
-            uploaded_files: Streamlit uploaded files
-            mode: 処理モード
-            prompt_key: 使用するプロンプト
-            validation_config: 検証設定
-            
-        Returns:
-            処理結果辞書
-        """
-        session_id = str(uuid.uuid4())
-        
-        try:
-            # 統一アダプターによるファイル変換
-            input_config = {
-                'uploaded_files': uploaded_files,
-                'supported_types': ['application/pdf'],
-                'max_file_size': 50 * 1024 * 1024
-            }
-            
-            # 入力検証
-            if not self.input_adapter.validate_input(input_config):
-                raise ValueError("入力ファイルの検証に失敗しました")
-            
-            # ファイルデータ取得
-            file_data_list = await self.input_adapter.get_files(input_config)
-            
-            if not file_data_list:
-                raise ValueError("処理可能なファイルが見つかりませんでした")
-            
-            # 従来のバッチ処理形式に変換
-            files_data = [
-                {
-                    'data': file_data.content,
-                    'filename': file_data.filename
-                }
-                for file_data in file_data_list
-            ]
-            
-            # 既存のバッチ処理を呼び出し
-            return await self.process_batch_files(files_data, mode, prompt_key, validation_config)
-            
-        except Exception as e:
-            logger.error(f"統一アップロード処理エラー: {e}")
-            return {
-                'session_id': session_id,
-                'error': str(e),
-                'status': ProcessingStatus.FAILED,
-                'processed_at': get_jst_now()
-            }
-
     def process_batch(self, 
                      files_data: List[Dict[str, Any]],
                      mode: str = ProcessingMode.BATCH,
@@ -466,40 +409,7 @@ class UnifiedProcessingWorkflow:
             
             await self._fail_session(session_id, error_result)
             return error_result
-    
-    async def _process_with_gemini(self, 
-                                 file_data: bytes, 
-                                 system_prompt: str, 
-                                 user_prompt: str) -> Dict[str, Any]:
-        """Gemini AIによる処理（統一プロンプト使用）"""
-        try:
-            # 統一プロンプトを結合
-            combined_prompt = f"{system_prompt}\n\n{user_prompt}"
-            
-            # GeminiAPIManagerのanalyze_pdf_contentを直接呼び出し（プロンプト管理の重複を回避）
-            result = await asyncio.to_thread(
-                self.gemini_helper.analyze_pdf_content,
-                file_data,
-                combined_prompt
-            )
-            
-            # raw_textフィールドの後処理
-            if result and isinstance(result, dict) and 'raw_text' in result:
-                # Markdownブロック内のJSONを抽出
-                extracted_json = self._extract_json_from_raw_text(result['raw_text'])
-                if extracted_json:
-                    logger.info("raw_textからJSONデータを正常に抽出しました")
-                    return extracted_json
-                else:
-                    logger.warning("raw_textからJSONの抽出に失敗しました")
-                    return {}
-            
-            return result if result else {}
-        except Exception as e:
-            logger.error(f"Gemini処理エラー: {e}")
-            logger.exception("Gemini処理詳細エラー:")  # スタックトレースも出力
-            raise
-    
+        
     def _extract_json_from_raw_text(self, raw_text: str) -> Optional[Dict[str, Any]]:
         """
         raw_textフィールドからJSONデータを抽出
@@ -1246,8 +1156,13 @@ def _add_sync_methods_to_workflow():
             )
             
             # AI処理実行（同期）
-            ai_result = self._process_with_gemini_sync(
-                file_data, system_prompt, user_prompt
+            # 統一プロンプトを結合
+            combined_prompt = f"{system_prompt}\n\n{user_prompt}"
+            
+            # GeminiAPIManagerの直接呼び出し（中間レイヤー削除）
+            ai_result = self.gemini_helper.analyze_pdf_content(
+                file_data,
+                combined_prompt
             )
             
             # データ検証
@@ -1293,35 +1208,7 @@ def _add_sync_methods_to_workflow():
             
             return error_result
     
-    def _process_with_gemini_sync(self, 
-                                file_data: bytes, 
-                                system_prompt: str, 
-                                user_prompt: str) -> Dict[str, Any]:
-        """Gemini AIによる同期処理"""
-        try:
-            # 統一プロンプトを結合
-            combined_prompt = f"{system_prompt}\n\n{user_prompt}"
-            
-            # GeminiAPIManagerの同期メソッドを直接呼び出し
-            result = self.gemini_helper.analyze_pdf_content(
-                file_data,
-                combined_prompt
-            )
-            
-            # raw_textフィールドの後処理
-            if result and isinstance(result, dict) and 'raw_text' in result:
-                extracted_json = self._extract_json_from_raw_text(result['raw_text'])
-                if extracted_json:
-                    logger.info("raw_textからJSONデータを正常に抽出しました")
-                    return extracted_json
-                else:
-                    logger.warning("raw_textからJSONの抽出に失敗しました")
-                    return {}
-            
-            return result if result else {}
-        except Exception as e:
-            logger.error(f"Gemini同期処理エラー: {e}")
-            raise
+    # _process_with_gemini_sync メソッド削除済み（直接 GeminiAPIManager.analyze_pdf_content 呼び出しに統一）
     
     def _start_session_sync(self, session_id: str, mode: str, filenames: List[str]):
         """セッション開始処理（同期版）"""
@@ -1354,10 +1241,10 @@ def _add_sync_methods_to_workflow():
     
     # メソッドをクラスに動的追加
     UnifiedProcessingWorkflow._process_single_file_sync = _process_single_file_sync
-    UnifiedProcessingWorkflow._process_with_gemini_sync = _process_with_gemini_sync
+    # UnifiedProcessingWorkflow._process_with_gemini_sync = _process_with_gemini_sync  # 削除済み
     UnifiedProcessingWorkflow._start_session_sync = _start_session_sync
     UnifiedProcessingWorkflow._complete_session_sync = _complete_session_sync
     UnifiedProcessingWorkflow._fail_session_sync = _fail_session_sync
-
+    
 # 自動的にメソッドを追加
 _add_sync_methods_to_workflow()

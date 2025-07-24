@@ -356,13 +356,48 @@ def render_ocr_test_results(include_validation):
     if not st.session_state.ocr_test_results:
         return
     
-    # ワークフロー表示マネージャーを使用して結果表示
-    if hasattr(st.session_state, 'workflow_display_ocr') and st.session_state.workflow_display_ocr:
-        st.session_state.workflow_display_ocr.display_batch_results(st.session_state.ocr_test_results)
+    # UnifiedWorkflowEngineの結果表示（統合済み）
+    st.markdown("### 📊 OCRテスト結果")
+    
+    # 基本統計の表示
+    total_files = st.session_state.ocr_test_results.get('total_files', 0)
+    successful_files = st.session_state.ocr_test_results.get('successful_files', 0)
+    failed_files = st.session_state.ocr_test_results.get('failed_files', 0)
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("総ファイル数", total_files)
+    with col2:
+        st.metric("成功", successful_files, delta=f"{successful_files}/{total_files}")
+    with col3:
+        st.metric("失敗", failed_files, delta=f"{failed_files}/{total_files}")
+    
+    # 詳細結果の表示（簡易版）
+    if 'results' in st.session_state.ocr_test_results:
+        results = st.session_state.ocr_test_results['results']
+        st.markdown("### 📋 処理結果詳細")
+        
+        for i, result in enumerate(results, 1):
+            filename = result.get('filename', f'ファイル{i}')
+            success = result.get('success', False)
+            status_icon = "✅" if success else "❌"
+            
+            with st.expander(f"{status_icon} {filename}", expanded=False):
+                if result.get('extracted_data'):
+                    data = result['extracted_data']
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**請求元**: {data.get('issuer', 'N/A')}")
+                        st.write(f"**請求書番号**: {data.get('invoice_number', 'N/A')}")
+                    with col2:
+                        amount = data.get('amount_inclusive_tax', 0)
+                        st.write(f"**税込金額**: ¥{amount:,}" if amount else "**税込金額**: N/A")
+                        st.write(f"**通貨**: {data.get('currency', 'JPY')}")
+                
+                if result.get('error_message'):
+                    st.error(f"エラー: {result['error_message']}")
     else:
-        # フォールバック: 基本的な結果表示
-        st.warning("⚠️ OCRワークフロー表示マネージャーが未初期化です。基本表示を使用します。")
-        render_basic_ocr_results(st.session_state.ocr_test_results, include_validation)
+        st.info("📄 処理結果がありません")
 
 
 def render_basic_ocr_results(results, include_validation):

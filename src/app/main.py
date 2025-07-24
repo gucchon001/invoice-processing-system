@@ -50,8 +50,8 @@ try:
     # 統一コンポーネントのインポート
     from core.services.unified_prompt_manager import UnifiedPromptManager
     from core.services.prompt_selector import PromptSelector
-    from core.workflows.unified_processing import UnifiedProcessingWorkflow
-    from core.services.workflow_display_manager import WorkflowDisplayManager
+    # from core.workflows.unified_processing import UnifiedProcessingWorkflow  # 削除済み
+    # from core.services.workflow_display_manager import WorkflowDisplayManager  # 削除済み
     
     logger.info("全モジュールのインポートが完了しました（リファクタリング版）")
     
@@ -142,49 +142,13 @@ def initialize_session_state():
             st.session_state.prompt_selector = PromptSelector(st.session_state.prompt_manager)
             logger.info("✅ プロンプトセレクター初期化完了")
         
-        # 統合ワークフロー初期化
-        if "unified_workflow" not in st.session_state:
-            gemini_helper = GeminiAPIManager()
-            database_manager = get_database()
-            
-            st.session_state.unified_workflow = UnifiedProcessingWorkflow(
-                gemini_helper=gemini_helper,
-                database_manager=database_manager
-            )
-            logger.info("✅ 統合ワークフロー初期化完了")
+        # 統合ワークフロー初期化（削除 - UnifiedWorkflowEngineに統合済み）
+        # st.session_state.unified_workflow = None  # 未使用
+        # st.session_state.workflow_display = None  # 未使用
         
-        # ワークフロー表示マネージャー初期化
-        if "workflow_display" not in st.session_state:
-            st.session_state.workflow_display = WorkflowDisplayManager(st.session_state.unified_workflow)
-            logger.info("✅ ワークフロー表示マネージャー初期化完了")
-        
-        # OCR専用統合ワークフロー初期化
-        if "unified_workflow_ocr" not in st.session_state:
-            try:
-                gemini_helper = GeminiAPIManager()
-                database_manager = get_database()
-                
-                st.session_state.unified_workflow_ocr = UnifiedProcessingWorkflow(
-                    gemini_helper=gemini_helper,
-                    database_manager=database_manager
-                )
-                logger.info("✅ OCR専用統合ワークフロー初期化完了")
-            except Exception as e:
-                logger.error(f"❌ OCR専用ワークフロー初期化エラー: {e}")
-                st.session_state.unified_workflow_ocr = None
-        
-        # OCR専用ワークフロー表示マネージャー初期化
-        if "workflow_display_ocr" not in st.session_state:
-            try:
-                if st.session_state.unified_workflow_ocr is not None:
-                    st.session_state.workflow_display_ocr = WorkflowDisplayManager(st.session_state.unified_workflow_ocr)
-                    logger.info("✅ OCR専用ワークフロー表示マネージャー初期化完了")
-                else:
-                    st.session_state.workflow_display_ocr = None
-                    logger.warning("⚠️ OCR専用ワークフロー表示マネージャー初期化スキップ（ワークフローが未初期化）")
-            except Exception as e:
-                logger.error(f"❌ OCR専用ワークフロー表示マネージャー初期化エラー: {e}")
-                st.session_state.workflow_display_ocr = None
+        # OCR専用統合ワークフロー初期化（削除 - UnifiedWorkflowEngineに統合済み）
+        # st.session_state.unified_workflow_ocr = None  # 未使用
+        # st.session_state.workflow_display_ocr = None  # 未使用
         
         # 🚀 統一ワークフローエンジン初期化（新システム）
         if "unified_engine" not in st.session_state:
