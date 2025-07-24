@@ -247,42 +247,47 @@ def render_drive_upload_test():
 
 
 def run_drive_upload_test(uploaded_file, folder_id=None):
-    """Google Driveアップロードテスト実行"""
+    """Google Driveアップロードテスト実行（統一ワークフローエンジン版）"""
     try:
-        with st.spinner("ファイルをGoogle Driveにアップロード中..."):
-            drive_manager = get_google_drive()
+        with st.spinner("統一ワークフローエンジンでアップロード中..."):
+            # セッション状態から統一ワークフローエンジンを取得
+            if 'unified_engine' not in st.session_state:
+                st.error("❌ 統一ワークフローエンジンが初期化されていません")
+                return
+            
+            engine = st.session_state.unified_engine
             
             # ファイルデータ取得
             file_data = uploaded_file.read()
             filename = uploaded_file.name
             
-            # アップロード実行
-            result = drive_manager.upload_file(
-                file_content=file_data,
+            # 統一ワークフローエンジンで処理（アップロードテストモード）
+            result = engine.process_single_file(
+                pdf_file_data=file_data,
                 filename=filename,
-                folder_id=folder_id
+                user_id="test@example.com",
+                mode="upload_test"  # テスト専用モード
             )
             
-            if result and result.get('file_id'):
-                file_id = result['file_id']
-                file_url = result.get('file_url', '')
-                
-                st.success(f"✅ アップロード成功！")
+            if result.success:
+                st.success(f"✅ 統一ワークフロー アップロード成功！")
                 st.info(f"📄 ファイル名: {filename}")
-                st.info(f"🆔 ファイルID: {file_id}")
-                if file_url:
-                    st.info(f"🔗 ファイルURL: {file_url}")
+                st.info(f"🆔 Invoice ID: {result.invoice_id}")
                 
-                # ファイル情報表示
-                file_info = drive_manager.get_file_info(file_id)
-                if file_info:
+                # 詳細結果表示
+                if result.file_info:
                     st.markdown("### 📋 詳細ファイル情報")
-                    st.json(file_info)
+                    st.json(result.file_info)
+                
+                if result.extracted_data:
+                    st.markdown("### 🤖 AI抽出データ")
+                    st.json(result.extracted_data)
+                    
             else:
-                st.error("❌ アップロード失敗")
+                st.error(f"❌ 統一ワークフロー アップロード失敗: {result.error_message}")
                 
     except Exception as e:
-        st.error(f"アップロードエラー: {e}")
+        st.error(f"統一ワークフローエラー: {e}")
 
 
 def render_aggrid_test_page():
