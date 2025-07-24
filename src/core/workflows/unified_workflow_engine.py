@@ -322,6 +322,45 @@ class UnifiedWorkflowEngine:
             logger.error(f"❌ 統一DB保存エラー: {e}")
             raise Exception(f"統一データベース保存に失敗しました: {e}")
     
+    def process_uploaded_files(self, 
+                             uploaded_files, 
+                             user_id: str,
+                             mode: str = "upload") -> Dict[str, Any]:
+        """
+        Streamlit uploaded files の直接処理（複数ファイル対応）
+        
+        Args:
+            uploaded_files: Streamlit st.file_uploader から返されるファイルリスト
+            user_id: ユーザーID
+            mode: 処理モード
+            
+        Returns:
+            バッチ処理結果辞書
+        """
+        logger.info(f"📤 Streamlitアップロードファイル処理開始: {len(uploaded_files)}件")
+        
+        try:
+            # Streamlit uploaded files を files_data 形式に変換
+            files_data = []
+            for uploaded_file in uploaded_files:
+                # ファイルデータを読み取り
+                pdf_data = uploaded_file.read()
+                files_data.append({
+                    'filename': uploaded_file.name,
+                    'data': pdf_data
+                })
+                logger.info(f"📄 ファイル変換完了: {uploaded_file.name} ({len(pdf_data):,} bytes)")
+            
+            # 既存のバッチ処理メソッドを呼び出し
+            result = self.process_batch_files(files_data, user_id, mode)
+            
+            logger.info(f"✅ Streamlitアップロードファイル処理完了: {len(uploaded_files)}件")
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Streamlitアップロードファイル処理エラー: {e}")
+            raise Exception(f"アップロードファイル処理に失敗しました: {e}")
+    
     def process_batch_files(self, 
                            files_data: List[Dict[str, Any]], 
                            user_id: str,

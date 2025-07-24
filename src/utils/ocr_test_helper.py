@@ -17,6 +17,9 @@ import uuid
 # 設定ヘルパーをインポート
 from utils.config_helper import get_gemini_model
 
+# 統一バリデーションシステムをインポート
+from core.services.invoice_validator import InvoiceValidator
+
 # ロガー設定
 logger = logging.getLogger(__name__)
 
@@ -54,6 +57,8 @@ class OCRTestManager:
         self.drive_manager = drive_manager
         self.gemini_manager = gemini_manager
         self.database_manager = database_manager
+        # 統一バリデーションシステムの初期化
+        self.validator = InvoiceValidator()
         
     def get_drive_pdfs(self, folder_id: str) -> List[Dict[str, Any]]:
         """Google DriveフォルダからPDFファイル一覧を取得"""
@@ -239,83 +244,39 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
             return None
     
     def validate_ocr_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        """OCR結果の詳細検証（改良版）"""
-        validation = {
-            "is_valid": True,
-            "errors": [],
-            "warnings": [],
-            "completeness_score": 0,
-            "error_categories": {
-                "critical": [],      # システム停止レベル
-                "data_missing": [],  # 必須データ欠損
-                "data_format": [],   # データ形式エラー
-                "business_logic": [] # ビジネスロジック警告
+        """OCR結果の詳細検証（統合版バリデーターを使用）"""
+        try:
+            # 統一バリデーションシステムを使用
+            validation = self.validator.validate_invoice_data(result, strict_mode=False)
+            
+            # OCRテスト用の完全性スコア計算を追加
+            if "completeness_score" not in validation:
+                required_fields = {"issuer", "amount_inclusive_tax", "currency"}
+                important_fields = {"payer", "main_invoice_number", "issue_date"}
+                optional_fields = {"t_number", "amount_exclusive_tax", "due_date", "line_items", "key_info"}
+                all_fields = required_fields | important_fields | optional_fields
+                
+                filled_fields = sum(1 for field in all_fields if self._is_valid_field_value(result.get(field)))
+                validation["completeness_score"] = round((filled_fields / len(all_fields)) * 100, 1)
+            
+            logger.info(f"統合バリデーション完了: エラー{len(validation.get('errors', []))}件, 警告{len(validation.get('warnings', []))}件")
+            return validation
+            
+        except Exception as e:
+            logger.error(f"統合バリデーションでエラー: {e}")
+            # フォールバック: 基本的な検証結果を返す
+            return {
+                "is_valid": False,
+                "errors": [f"バリデーションシステムエラー: {str(e)}"],
+                "warnings": [],
+                "completeness_score": 0,
+                "error_categories": {
+                    "critical": [f"バリデーションシステムエラー: {str(e)}"],
+                    "data_missing": [],
+                    "data_format": [],
+                    "business_logic": []
+                }
             }
-        }
-        
-        # 1. 必須フィールドの詳細チェック（JSONプロンプト対応）
-        required_fields = {
-            "issuer": "請求元企業名",                    # JSONプロンプト版
-            "amount_inclusive_tax": "税込金額",          # JSONプロンプト版
-            "currency": "通貨"
-        }
-        
-        important_fields = {
-            "payer": "請求先企業名",                     # JSONプロンプト版
-            "main_invoice_number": "請求書番号",         # JSONプロンプト版
-            "issue_date": "発行日"
-        }
-        
-        optional_fields = {
-            "t_number": "登録番号",                      # JSONプロンプト版
-            "amount_exclusive_tax": "税抜金額",          # JSONプロンプト版
-            "due_date": "支払期日",
-            "line_items": "明細情報",
-            "key_info": "キー情報"
-        }
-        
-        # 必須フィールドチェック
-        for field, display_name in required_fields.items():
-            value = result.get(field)
-            if not self._is_valid_field_value(value):
-                error_msg = f"{display_name}が取得できませんでした"
-                validation["errors"].append(error_msg)
-                validation["error_categories"]["data_missing"].append(error_msg)
-                validation["is_valid"] = False
-        
-        # 重要フィールドチェック（警告レベル）
-        for field, display_name in important_fields.items():
-            value = result.get(field)
-            if not self._is_valid_field_value(value):
-                warning_msg = f"{display_name}が取得できませんでした"
-                validation["warnings"].append(warning_msg)
-                validation["error_categories"]["business_logic"].append(warning_msg)
-        
-        # 2. データ型・フォーマット検証
-        self._validate_data_formats(result, validation)
-        
-        # 3. 金額整合性チェック
-        self._validate_amounts(result, validation)
-        
-        # 4. 日付検証
-        self._validate_dates(result, validation)
-        
-        # 5. 外貨取引チェック
-        self._validate_foreign_currency(result, validation)
-        
-        # 6. 明細整合性チェック
-        self._validate_line_items(result, validation)
-        
-        # 7. 完全性スコア計算
-        all_fields = {**required_fields, **important_fields, **optional_fields}
-        filled_fields = sum(1 for field in all_fields.keys() if self._is_valid_field_value(result.get(field)))
-        validation["completeness_score"] = round((filled_fields / len(all_fields)) * 100, 1)
-        
-        # 8. エラー重要度に基づく最終判定
-        if validation["error_categories"]["critical"] or validation["error_categories"]["data_missing"]:
-            validation["is_valid"] = False
-        
-        return validation
     
     def _is_valid_field_value(self, value) -> bool:
         """フィールド値の有効性をチェック"""
@@ -326,220 +287,7 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
         if isinstance(value, (list, dict)) and len(value) == 0:
             return False
         return True
-    
-    def _validate_data_formats(self, result: Dict[str, Any], validation: Dict[str, Any]):
-        """データ型・フォーマット検証"""
-        
-        # 通貨コード検証
-        currency = result.get("currency")
-        if currency:
-            valid_currencies = ["JPY", "USD", "EUR", "GBP", "AUD", "CAD", "CHF"]
-            if currency not in valid_currencies:
-                error_msg = f"未対応の通貨コードです: {currency}"
-                validation["warnings"].append(error_msg)
-                validation["error_categories"]["data_format"].append(error_msg)
-        
-        # 金額データ型チェック（JSONプロンプト対応）
-        for amount_field in ["amount_inclusive_tax", "amount_exclusive_tax"]:
-            amount = result.get(amount_field)
-            if amount is not None and not isinstance(amount, (int, float)):
-                try:
-                    float(amount)
-                except (ValueError, TypeError):
-                    error_msg = f"金額フィールド '{amount_field}' のフォーマットが不正です: {amount}"
-                    validation["errors"].append(error_msg)
-                    validation["error_categories"]["data_format"].append(error_msg)
-                    validation["is_valid"] = False
-        
-        # 企業名の長さチェック（JSONプロンプト対応）
-        issuer = result.get("issuer")
-        if issuer and len(str(issuer)) > 100:
-            warning_msg = f"請求元企業名が長すぎます（{len(str(issuer))}文字）"
-            validation["warnings"].append(warning_msg)
-            validation["error_categories"]["data_format"].append(warning_msg)
-    
-    def _validate_amounts(self, result: Dict[str, Any], validation: Dict[str, Any]):
-        """金額検証（外貨取引対応・JSONプロンプト対応）"""
-        tax_included = result.get("amount_inclusive_tax")
-        tax_excluded = result.get("amount_exclusive_tax")
-        currency = result.get("currency", "JPY")
-        
-        # 外貨取引判定
-        is_foreign_currency = currency and currency.upper() != "JPY"
-        
-        # 数値変換試行
-        try:
-            if tax_included is not None:
-                tax_included = float(tax_included)
-            if tax_excluded is not None:
-                tax_excluded = float(tax_excluded)
-        except (ValueError, TypeError):
-            return  # フォーマットエラーは別の検証で処理済み
-        
-        # 負の金額チェック
-        if tax_included is not None and tax_included < 0:
-            warning_msg = f"税込金額が負の値です: {tax_included}（返金・調整の可能性）"
-            validation["warnings"].append(warning_msg)
-            validation["error_categories"]["business_logic"].append(warning_msg)
-        
-        # 異常に大きな金額チェック
-        if tax_included is not None and tax_included > 10000000:  # 1000万円超
-            warning_msg = f"税込金額が異常に高額です: {tax_included:,.0f}円"
-            validation["warnings"].append(warning_msg)
-            validation["error_categories"]["business_logic"].append(warning_msg)
-        
-        # 税込・税抜金額の整合性チェック（外貨取引対応）
-        if (tax_included is not None and tax_excluded is not None and 
-            tax_included > 0 and tax_excluded > 0):
-            
-            if is_foreign_currency:
-                # 外貨取引では税込=税抜が正常（海外事業者は非課税）
-                if tax_included == tax_excluded:
-                    # 正常なパターンなので警告は出さない
-                    pass
-                elif tax_included < tax_excluded:
-                    # 税込 < 税抜は明らかに異常
-                    warning_msg = f"外貨取引で税込金額({tax_included:,.0f})が税抜金額({tax_excluded:,.0f})を下回っています"
-                    validation["warnings"].append(warning_msg)
-                    validation["error_categories"]["business_logic"].append(warning_msg)
-                # 税込 > 税抜の場合は税率計算へ進む
-            else:
-                # 国内取引（JPY）の場合は従来通りの判定
-                if tax_included <= tax_excluded:
-                    warning_msg = f"税込金額({tax_included:,.0f})が税抜金額({tax_excluded:,.0f})以下です"
-                    validation["warnings"].append(warning_msg)
-                    validation["error_categories"]["business_logic"].append(warning_msg)
-            
-            # 税率計算（外貨取引対応）
-            if tax_excluded > 0:
-                tax_rate = ((tax_included - tax_excluded) / tax_excluded) * 100
-                
-                if is_foreign_currency:
-                    # 外貨取引では税率0%（税込=税抜）が正常
-                    if abs(tax_rate) < 0.1:  # 0%前後（計算誤差考慮）
-                        # 正常なパターンなので警告は出さない
-                        pass
-                    elif tax_rate < 0:
-                        # 負の税率は明らかに異常
-                        warning_msg = f"外貨取引で計算された税率が負の値です: {tax_rate:.1f}%"
-                        validation["warnings"].append(warning_msg)
-                        validation["error_categories"]["business_logic"].append(warning_msg)
-                    elif tax_rate > 15:
-                        # 異常に高い税率
-                        warning_msg = f"外貨取引で計算された税率が異常に高いです: {tax_rate:.1f}%"
-                        validation["warnings"].append(warning_msg)
-                        validation["error_categories"]["business_logic"].append(warning_msg)
-                else:
-                    # 国内取引（JPY）の場合は従来通りの判定
-                    if tax_rate < 5 or tax_rate > 15:  # 消費税率の妥当性チェック
-                        warning_msg = f"計算された税率が異常です: {tax_rate:.1f}%"
-                        validation["warnings"].append(warning_msg)
-                        validation["error_categories"]["business_logic"].append(warning_msg)
-    
-    def _validate_dates(self, result: Dict[str, Any], validation: Dict[str, Any]):
-        """日付検証"""
-        from datetime import datetime, timedelta
-        
-        issue_date = result.get("issue_date")
-        due_date = result.get("due_date")
-        
-        # 日付フォーマットチェック
-        parsed_issue_date = None
-        parsed_due_date = None
-        
-        if issue_date:
-            try:
-                parsed_issue_date = datetime.fromisoformat(str(issue_date))
-            except ValueError:
-                warning_msg = f"発行日のフォーマットが不正です: {issue_date}"
-                validation["warnings"].append(warning_msg)
-                validation["error_categories"]["data_format"].append(warning_msg)
-        
-        if due_date:
-            try:
-                parsed_due_date = datetime.fromisoformat(str(due_date))
-            except ValueError:
-                warning_msg = f"支払期日のフォーマットが不正です: {due_date}"
-                validation["warnings"].append(warning_msg)
-                validation["error_categories"]["data_format"].append(warning_msg)
-        
-        # 日付の論理チェック（境界値対応）
-        if parsed_issue_date and parsed_due_date:
-            if parsed_due_date < parsed_issue_date:
-                warning_msg = "支払期日が発行日より前になっています"
-                validation["warnings"].append(warning_msg)
-                validation["error_categories"]["business_logic"].append(warning_msg)
-            # 同一日の場合は正常（即日支払いもビジネス上有効）
-        
-        # 異常に古い/新しい日付チェック
-        current_date = datetime.now()
-        if parsed_issue_date:
-            if parsed_issue_date > current_date + timedelta(days=30):
-                warning_msg = "発行日が未来すぎます"
-                validation["warnings"].append(warning_msg)
-                validation["error_categories"]["business_logic"].append(warning_msg)
-            
-            if parsed_issue_date < current_date - timedelta(days=1095):  # 3年前
-                warning_msg = "発行日が3年以上前です"
-                validation["warnings"].append(warning_msg)
-                validation["error_categories"]["business_logic"].append(warning_msg)
-    
-    def _validate_foreign_currency(self, result: Dict[str, Any], validation: Dict[str, Any]):
-        """外貨取引チェック（JSONプロンプト対応）"""
-        currency = result.get("currency")
-        issuer = result.get("issuer", "")
-        
-        if currency and currency != "JPY":
-            # 外貨取引の基本警告
-            warning_msg = f"外貨取引のため為替レート確認が必要です（{currency}）"
-            validation["warnings"].append(warning_msg)
-            validation["error_categories"]["business_logic"].append(warning_msg)
-            
-            # 海外事業者チェック（簡易判定）
-            foreign_keywords = ["LLC", "Ltd", "Inc", "Corp", "GmbH", "Limited", "Ireland", "Singapore"]
-            if any(keyword in issuer for keyword in foreign_keywords):
-                warning_msg = "海外事業者のため消費税処理を確認してください"
-                validation["warnings"].append(warning_msg)
-                validation["error_categories"]["business_logic"].append(warning_msg)
-    
-    def _validate_line_items(self, result: Dict[str, Any], validation: Dict[str, Any]):
-        """明細整合性チェック"""
-        line_items = result.get("line_items", [])
-        
-        if line_items and isinstance(line_items, list):
-            # 明細合計の計算
-            line_total = 0
-            invalid_items = 0
-            
-            for i, item in enumerate(line_items):
-                if not isinstance(item, dict):
-                    continue
-                
-                amount = item.get("amount")
-                if amount is not None:
-                    try:
-                        line_total += float(amount)
-                    except (ValueError, TypeError):
-                        invalid_items += 1
-                        warning_msg = f"明細{i+1}の金額フォーマットが不正です: {amount}"
-                        validation["warnings"].append(warning_msg)
-                        validation["error_categories"]["data_format"].append(warning_msg)
-            
-            # 請求金額との突合（JSONプロンプト対応）
-            invoice_total = result.get("amount_exclusive_tax")
-            if (invoice_total is not None and isinstance(invoice_total, (int, float)) and 
-                invoice_total > 0 and line_total > 0):
-                
-                difference_rate = abs(line_total - invoice_total) / invoice_total
-                if difference_rate > 0.1:  # 10%以上の差異
-                    warning_msg = f"明細合計({line_total:,.0f})と請求金額({invoice_total:,.0f})に{difference_rate*100:.1f}%の差異があります"
-                    validation["warnings"].append(warning_msg)
-                    validation["error_categories"]["business_logic"].append(warning_msg)
-        
-        elif line_items is not None and not isinstance(line_items, list):
-            warning_msg = "明細情報のフォーマットが不正です"
-            validation["warnings"].append(warning_msg)
-            validation["error_categories"]["data_format"].append(warning_msg)
+
     
     def format_ocr_result_for_display(self, result: Dict[str, Any], validation: Dict[str, Any]) -> pd.DataFrame:
         """OCR結果を表示用データフレームに変換"""

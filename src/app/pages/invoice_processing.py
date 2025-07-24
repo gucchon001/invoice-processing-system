@@ -262,18 +262,9 @@ def execute_unified_upload_processing(uploaded_files, prompt_key, include_valida
                 progress_callback=progress_callback
             )
             
-            # バッチ処理用データ準備
-            files_data = []
-            for uploaded_file in uploaded_files:
-                pdf_data = uploaded_file.read()
-                files_data.append({
-                    'filename': uploaded_file.name,
-                    'data': pdf_data
-                })
-            
-            # 統一バッチ処理実行（成功エンジンのprocess_batch_files使用）
-            batch_result = engine.process_batch_files(
-                files_data=files_data,
+            # 統一アップロード処理実行（Streamlit uploaded files直接処理）
+            batch_result = engine.process_uploaded_files(
+                uploaded_files=uploaded_files,
                 user_id=user_id,
                 mode="upload"
             )

@@ -19,7 +19,8 @@ try:
     from infrastructure.ai.gemini_helper import get_gemini_api, test_gemini_connection, GeminiAPIManager
     from infrastructure.storage.google_drive_helper import get_google_drive, test_google_drive_connection
     from infrastructure.ui.aggrid_helper import get_aggrid_manager, test_aggrid_connection
-    from core.workflows.invoice_processing import InvoiceProcessingWorkflow, WorkflowProgress, WorkflowResult
+    from core.workflows.unified_processing import UnifiedProcessingWorkflow
+    from core.models.workflow_models import WorkflowProgress, WorkflowResult
     from utils.log_config import get_logger
     
     logger = get_logger(__name__)
