@@ -12,7 +12,7 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 from infrastructure.ai.gemini_helper import GeminiAPIManager
-from utils.prompt_manager import get_prompt_manager, PromptValidationError, PromptLoadError
+from core.services.unified_prompt_manager import UnifiedPromptManager
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class InvoiceMatcherService:
     def __init__(self):
         """照合サービスを初期化"""
         self.gemini_manager = GeminiAPIManager()
-        self.prompt_manager = get_prompt_manager()
+        self.prompt_manager = UnifiedPromptManager()
         logger.info("InvoiceMatcherService初期化完了")
     
     def match_company_name(self, issuer_name: str, master_company_list: List[str]) -> Optional[Dict[str, Any]]:
@@ -48,16 +48,25 @@ class InvoiceMatcherService:
             
             # 2. 従来のプロンプトベース照合にフォールバック
             logger.info("強化版照合失敗、プロンプトベース照合にフォールバック")
+            return self._match_with_prompt(issuer_name, master_company_list)
             
-            # プロンプト生成
+        except Exception as e:
+            logger.error(f"企業名照合でエラー: {e}")
+            return None
+    
+    def _match_with_prompt(self, issuer_name: str, master_company_list: List[str]) -> Optional[Dict[str, Any]]:
+        """プロンプトベースの企業名照合"""
+        try:
             variables = {
                 "issuer_name": issuer_name,
                 "master_company_list": master_company_list  # JSON文字列ではなく配列として直接渡す
             }
             
             try:
-                prompt = self.prompt_manager.render_prompt("master_matcher_prompt", variables)
-            except (PromptValidationError, PromptLoadError) as e:
+                # 統一プロンプト管理システムを使用
+                system_prompt, user_prompt = self.prompt_manager.format_prompt_for_gemini("master_matcher_prompt", variables)
+                prompt = f"{system_prompt}\n\n{user_prompt}"
+            except Exception as e:
                 logger.error(f"プロンプト生成エラー: {e}")
                 # フォールバック: 手動でプロンプトを構築
                 company_list_str = json.dumps(master_company_list, ensure_ascii=False)
@@ -72,66 +81,35 @@ class InvoiceMatcherService:
 最も類似度が高い企業名を特定し、以下のJSON形式で回答してください：
 
 {{
-  "matched_company_name": "最も一致する企業名（85%以上の確信度がない場合はnull）",
-  "confidence_score": 0.95,
-  "matching_reason": "照合理由",
-  "matching_details": {{
-    "original_name": "{issuer_name}",
-    "normalized_original": "正規化後の請求元名",
-    "normalized_matched": "正規化後のマッチ名",
-    "transformation_applied": "適用した変換ルール"
-  }},
-  "alternative_candidates": []
+    "matched_company": "マッチした企業名",
+    "confidence_score": 0.95,
+    "match_reason": "マッチ理由",
+    "is_perfect_match": true
 }}
 """
             
-            # Gemini APIで照合実行
-            response = self.gemini_manager.generate_text(prompt)
+            logger.info(f"企業名照合プロンプト実行: {issuer_name}")
+            ai_result = self.gemini_manager.generate_text(prompt)
             
-            if not response:
-                logger.error("企業名照合: Gemini APIからの応答がありません")
-                return enhanced_result  # 強化版の結果を返す（確信度が低くても）
+            if ai_result:
+                # JSON解析
+                parsed_result = self._parse_json_response(ai_result)
+                
+                if parsed_result:
+                    # 結果の後処理
+                    final_result = self._process_matching_result(parsed_result, issuer_name, master_company_list)
+                    
+                    if final_result:
+                        logger.info(f"企業名照合成功: {final_result.get('matched_company', 'N/A')} (信頼度: {final_result.get('confidence_score', 0):.2f})")
+                        return final_result
             
-            # JSONレスポンスをパース（エラーハンドリング強化）
-            try:
-                # Geminiが説明文付きでレスポンスを返す場合の処理
-                cleaned_json = self._extract_json_from_response(response)
-                result = json.loads(cleaned_json)
-                
-                matched_name = result.get("matched_company_name")
-                confidence = result.get("confidence_score", 0)
-                
-                if matched_name and confidence >= 0.85:
-                    logger.info(f"プロンプトベース照合成功: {matched_name} (確信度: {confidence:.2f})")
-                    return result
-                else:
-                    logger.warning(f"プロンプトベース照合失敗: 確信度不足 ({confidence:.2f})")
-                    # 強化版の結果の方が良い場合はそれを返す
-                    if enhanced_result and enhanced_result.get("confidence_score", 0) > confidence:
-                        logger.info("強化版の結果を採用")
-                        return enhanced_result
-                    return result
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"企業名照合: JSON解析エラー: {e}")
-                logger.error(f"Raw response: {response}")
-                # フォールバック：照合失敗として処理
-                fallback_result = {
-                    "matched_company_name": None,
-                    "confidence_score": 0.0,
-                    "matching_reason": "JSON解析エラー",
-                    "matching_details": {"error": str(e)},
-                    "alternative_candidates": []
-                }
-                return enhanced_result if enhanced_result else fallback_result
-                
-        except PromptValidationError as e:
-            logger.error(f"企業名照合: プロンプト検証エラー: {e}")
-            return enhanced_result if 'enhanced_result' in locals() else None
+            logger.warning(f"企業名照合失敗: {issuer_name}")
+            return None
+            
         except Exception as e:
-            logger.error(f"企業名照合: 予期しないエラー: {e}")
-            return enhanced_result if 'enhanced_result' in locals() else None
-    
+            logger.error(f"プロンプトベース企業名照合でエラー: {e}")
+            return None
+
     def _extract_json_from_response(self, response: str) -> str:
         """
         Gemini AIレスポンスからJSON部分を抽出
@@ -187,97 +165,97 @@ class InvoiceMatcherService:
             return None
     
     def match_integrated_invoice(self, invoice_data: Dict[str, Any], 
-                               master_records: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+                               payment_masters: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """
-        統合照合機能（integrated_matcher）
+        統合請求書照合機能（integrated_matcher）
         
         Args:
-            invoice_data: 請求書から抽出された詳細情報
-            master_records: 支払マスタから絞り込まれた候補レコードのリスト
+            invoice_data: 請求書データ
+            payment_masters: 支払マスタデータリスト
             
         Returns:
             照合結果辞書またはNone
         """
         try:
-            logger.info(f"統合照合開始: {len(master_records)}件の候補を照合")
+            logger.info(f"統合請求書照合開始: {invoice_data.get('issuer', 'N/A')}")
             
-            # プロンプト生成
             variables = {
-                "invoice_data_json": json.dumps(invoice_data, ensure_ascii=False),
-                "master_records_json": json.dumps(master_records, ensure_ascii=False)
+                "invoice_data": invoice_data,
+                "payment_masters": payment_masters
             }
             
-            prompt = self.prompt_manager.render_prompt("integrated_matcher_prompt", variables)
+            try:
+                # 統一プロンプト管理システムを使用
+                system_prompt, user_prompt = self.prompt_manager.format_prompt_for_gemini("integrated_matcher_prompt", variables)
+                prompt = f"{system_prompt}\n\n{user_prompt}"
+            except Exception as e:
+                logger.error(f"統合照合プロンプト生成エラー: {e}")
+                # フォールバック処理
+                prompt = self._create_fallback_integrated_prompt(invoice_data, payment_masters)
             
             # Gemini APIで照合実行
-            response = self.gemini_manager.generate_text(prompt)
+            ai_result = self.gemini_manager.generate_text(prompt)
             
-            if not response:
-                logger.error("統合照合: Gemini APIからの応答がありません")
-                return None
+            if ai_result:
+                parsed_result = self._parse_json_response(ai_result)
+                
+                if parsed_result and self._validate_integrated_result(parsed_result):
+                    logger.info(f"統合照合成功: {parsed_result.get('final_classification', 'N/A')}")
+                    return parsed_result
             
-            # JSONレスポンスをパース（エラーハンドリング強化）
-            try:
-                # Geminiが説明文付きでレスポンスを返す場合の処理
-                cleaned_json = self._extract_json_from_response(response)
-                result = json.loads(cleaned_json)
-                logger.info(f"統合照合完了: {result.get('matched_entry_id', 'null')}")
-                return result
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"統合照合: JSON解析エラー: {e}")
-                logger.error(f"Raw response: {response}")
-                # フォールバック：照合失敗として処理
-                return {
-                    "matched_entry_id": None,
-                    "confidence_score": 0.0,
-                    "selection_reason": "JSON解析エラー",
-                    "processing_notes": f"JSON解析エラー: {str(e)}"
-                }
-                
-        except PromptValidationError as e:
-            logger.error(f"統合照合: プロンプト検証エラー: {e}")
+            logger.warning("統合照合失敗")
             return None
+            
         except Exception as e:
-            logger.error(f"統合照合: 予期しないエラー: {e}")
+            logger.error(f"統合請求書照合でエラー: {e}")
             return None
-    
-    def enhanced_invoice_extraction(self, pdf_content: bytes) -> Optional[Dict[str, Any]]:
+
+    def extract_invoice_advanced(self, invoice_text: str, 
+                               context_info: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
         """
-        強化版請求書抽出（キー情報重視）
+        高度請求書情報抽出（invoice_extractor）
         
         Args:
-            pdf_content: PDFファイルのバイナリデータ
+            invoice_text: 請求書テキスト
+            context_info: コンテキスト情報
             
         Returns:
             抽出結果辞書またはNone
         """
         try:
-            logger.info("強化版請求書抽出開始")
+            logger.info("高度請求書情報抽出開始")
             
-            # プロンプト生成（JSONから動的読み込み）
             variables = {
-                "invoice_image": pdf_content,
-                "extraction_mode": "comprehensive"
+                "invoice_text": invoice_text,
+                "context_info": context_info or {}
             }
             
-            prompt = self.prompt_manager.render_prompt("invoice_extractor_prompt", variables)
-            
-            # Gemini APIで抽出実行
-            result = self.gemini_manager.analyze_pdf_content(pdf_content, prompt)
-            
-            if result:
-                logger.info("強化版請求書抽出完了")
-                # キー情報の後処理
-                return self._post_process_key_info(result)
-            else:
-                logger.error("強化版請求書抽出失敗")
-                return None
+            try:
+                # 統一プロンプト管理システムを使用
+                system_prompt, user_prompt = self.prompt_manager.format_prompt_for_gemini("invoice_extractor_prompt", variables)
+                prompt = f"{system_prompt}\n\n{user_prompt}"
+            except Exception as e:
+                logger.error(f"抽出プロンプト生成エラー: {e}")
+                # フォールバック処理
+                prompt = self._create_fallback_extraction_prompt(invoice_text)
                 
-        except Exception as e:
-            logger.error(f"強化版請求書抽出エラー: {e}")
+            # Gemini APIで抽出実行
+            ai_result = self.gemini_manager.generate_text(prompt)
+            
+            if ai_result:
+                parsed_result = self._parse_json_response(ai_result)
+                
+                if parsed_result:
+                    logger.info("高度情報抽出成功")
+                    return parsed_result
+            
+            logger.warning("高度情報抽出失敗")
             return None
-    
+            
+        except Exception as e:
+            logger.error(f"高度請求書情報抽出でエラー: {e}")
+            return None
+
     def _post_process_key_info(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         キー情報の後処理・強化

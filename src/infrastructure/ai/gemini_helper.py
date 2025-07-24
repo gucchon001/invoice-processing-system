@@ -210,18 +210,20 @@ class GeminiAPIManager:
         try:
             # プロンプトマネージャーを使用してJSON外出しプロンプト読み込み
             logger.error("🔍 DEBUG: プロンプトマネージャー呼び出し中...")
-            from utils.prompt_manager import get_prompt_manager
+            from core.services.unified_prompt_manager import UnifiedPromptManager
             
-            prompt_manager = get_prompt_manager()
+            prompt_manager = UnifiedPromptManager()
             
-            # 請求書抽出プロンプトの生成
-            invoice_prompt = prompt_manager.render_prompt(
+            # 請求書抽出プロンプトの生成（統一フォーマット）
+            system_prompt, user_prompt = prompt_manager.format_prompt_for_gemini(
                 "invoice_extractor_prompt",
                 {
-                    "invoice_image": pdf_content,  # PDF内容は変数として渡す
+                    "filename": "PDF File",
                     "extraction_mode": "comprehensive"
                 }
             )
+            # 統一プロンプトを結合
+            invoice_prompt = f"{system_prompt}\n\n{user_prompt}"
             
             logger.info("JSONプロンプトを使用して請求書データ抽出を実行")
             return self.analyze_pdf_content(pdf_content, invoice_prompt)

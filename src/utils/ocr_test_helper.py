@@ -118,24 +118,26 @@ class OCRTestManager:
     def create_ocr_prompt(self, filename: str = "", file_size: int = 0) -> str:
         """OCR用のプロンプトを作成（JSON外出し対応）"""
         try:
-            # プロンプトマネージャーを使用してJSON外出しプロンプト読み込み
-            from utils.prompt_manager import get_prompt_manager
+            # 統一プロンプト管理システムを使用
+            from core.services.unified_prompt_manager import UnifiedPromptManager
             
-            prompt_manager = get_prompt_manager()
+            prompt_manager = UnifiedPromptManager()
             
             # ファイル情報を作成
             file_info = f"請求書PDFファイル: {filename}"
             if file_size > 0:
                 file_info += f" (サイズ: {file_size:,} bytes)"
             
-            # OCR抽出プロンプトの生成（実際のファイル情報を提供）
-            ocr_prompt = prompt_manager.render_prompt(
+            # OCR抽出プロンプトの生成（統一フォーマット）
+            system_prompt, user_prompt = prompt_manager.format_prompt_for_gemini(
                 "invoice_extractor_prompt",
                 {
                     "extraction_mode": "comprehensive",
-                    "invoice_image": file_info  # 実際のファイル情報を提供
+                    "filename": filename  # ファイル情報を提供
                 }
             )
+            # 統一プロンプトを結合
+            ocr_prompt = f"{system_prompt}\n\n{user_prompt}"
             
             logger.info(f"JSONプロンプトを使用してOCRプロンプトを生成: {filename}")
             return ocr_prompt
