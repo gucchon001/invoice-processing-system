@@ -214,11 +214,11 @@ class GeminiAPIManager:
             
             prompt_manager = UnifiedPromptManager()
             
-            # 請求書抽出プロンプトの生成（統一フォーマット）
+            # 請求書抽出プロンプトの生成（統一フォーマット・修正版）
             system_prompt, user_prompt = prompt_manager.format_prompt_for_gemini(
                 "invoice_extractor_prompt",
                 {
-                    "filename": "PDF File",
+                    "invoice_image": f"PDFファイル（{len(pdf_content)} bytes）",
                     "extraction_mode": "comprehensive"
                 }
             )

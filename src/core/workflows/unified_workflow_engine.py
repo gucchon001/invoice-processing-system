@@ -242,7 +242,7 @@ class UnifiedWorkflowEngine:
             # 統一プロンプト管理システムを使用
             prompt_key = self.prompt_selector.get_recommended_prompt("upload")
             system_prompt, user_prompt = self.prompt_manager.format_prompt_for_gemini(
-                prompt_key, {"filename": filename}
+                prompt_key, {"invoice_image": filename}
             )
             
             # AI処理実行

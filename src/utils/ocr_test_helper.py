@@ -128,12 +128,12 @@ class OCRTestManager:
             if file_size > 0:
                 file_info += f" (サイズ: {file_size:,} bytes)"
             
-            # OCR抽出プロンプトの生成（統一フォーマット）
+            # OCR抽出プロンプトの生成（統一フォーマット・修正版）
             system_prompt, user_prompt = prompt_manager.format_prompt_for_gemini(
                 "invoice_extractor_prompt",
                 {
                     "extraction_mode": "comprehensive",
-                    "filename": filename  # ファイル情報を提供
+                    "invoice_image": filename  # 正しい変数名に修正
                 }
             )
             # 統一プロンプトを結合
