@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS ocr_test_results (
     
     -- メタデータ
     processing_time DECIMAL(8,2), -- 処理時間（秒）
-    gemini_model VARCHAR(50) DEFAULT 'gemini-2.0-flash-exp',
+    gemini_model VARCHAR(50) DEFAULT 'gemini-2.5-flash-lite-preview-06-17',
     raw_response JSONB, -- 生のGemini APIレスポンス
     
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),

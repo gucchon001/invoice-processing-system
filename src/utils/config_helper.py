@@ -69,7 +69,7 @@ def get_config() -> ConfigHelper:
 # AI設定の便利関数
 def get_gemini_model() -> str:
     """Geminiモデル名を取得"""
-    return get_config().get_str("ai", "gemini_model", "gemini-2.0-flash-exp")
+    return get_config().get_str("ai", "gemini_model", "gemini-2.5-flash-lite-preview-06-17")
 
 def get_gemini_max_retries() -> int:
     """Gemini最大リトライ回数を取得"""

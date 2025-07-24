@@ -26,6 +26,27 @@ from utils.config_helper import (
 logger = logging.getLogger(__name__)
 
 
+def _clean_markdown_json(text: str) -> str:
+    """Markdownコードブロック記法をクリーンアップしてJSONを抽出"""
+    import re
+    
+    # ```json\n{...}\n``` パターン
+    json_match = re.search(r'```json\s*\n(.*?)\n```', text, re.DOTALL)
+    if json_match:
+        logger.info("🧹 Markdownコードブロック（```json）をクリーンアップ")
+        return json_match.group(1).strip()
+    
+    # ```\n{...}\n``` パターン（言語指定なし）
+    generic_match = re.search(r'```\s*\n(.*?)\n```', text, re.DOTALL)
+    if generic_match:
+        content = generic_match.group(1).strip()
+        if content.startswith('{') and content.endswith('}'):
+            logger.info("🧹 Markdownコードブロック（```）をクリーンアップ")
+            return content
+    
+    return text.strip()
+
+
 class GeminiAPIManager:
     """Gemini API管理クラス（JSONプロンプト対応版）"""
     
@@ -158,15 +179,19 @@ class GeminiAPIManager:
                 )
                 
                 if response and response.text:
+                    # Markdownコードブロックのクリーンアップ
+                    cleaned_text = _clean_markdown_json(response.text)
+                    
                     # JSON形式でレスポンスをパース
                     try:
-                        result = json.loads(response.text)
+                        result = json.loads(cleaned_text)
                         logger.info("PDF分析成功")
                         return result
                     except json.JSONDecodeError as e:
                         logger.error(f"JSON解析エラー: {e}")
+                        logger.debug(f"パース失敗テキスト: {cleaned_text[:200]}...")
                         # JSONでない場合はテキストとして返す
-                        return {"raw_text": response.text}
+                        return {"raw_text": cleaned_text}
                 
                 return None
                 

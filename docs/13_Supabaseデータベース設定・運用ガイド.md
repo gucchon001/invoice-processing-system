@@ -111,7 +111,7 @@ CREATE TABLE public.ocr_test_results (
     validation_warnings TEXT[],
     -- メタデータ
     processing_time DECIMAL(8,2),
-    gemini_model VARCHAR(50) DEFAULT 'gemini-2.0-flash-exp',
+    gemini_model VARCHAR(50) DEFAULT 'gemini-2.5-flash-lite-preview-06-17',
     raw_response JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()

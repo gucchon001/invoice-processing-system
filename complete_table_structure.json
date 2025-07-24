@@ -158,7 +158,7 @@
     },
     "gemini_model": {
       "type": "str",
-      "sample_value": "gemini-2.0-flash-exp",
+              "sample_value": "gemini-2.5-flash-lite-preview-06-17",
       "category": "meta"
     },
     "created_at": {

@@ -10,6 +10,7 @@ from supabase import create_client, Client
 import logging
 from typing import Dict, List, Any, Optional
 import pandas as pd
+from utils.config_helper import get_gemini_model
 
 # ロガー設定
 logger = logging.getLogger(__name__)
@@ -328,8 +329,8 @@ class DatabaseManager:
                 'file_path': invoice_data.get('gdrive_file_id', ''),
                 'file_size': invoice_data.get('file_size'),
                 
-                # AIモデル情報
-                'gemini_model': 'gemini-2.0-flash-exp',
+                # AIモデル情報（設定ファイルから取得）
+                'gemini_model': get_gemini_model(),
                 
                 # JST時間の明示的設定
                 'created_at': jst_now,
