@@ -20,6 +20,7 @@ try:
     from core.models.workflow_models import ProcessingMode
     from core.services.unified_prompt_manager import UnifiedPromptManager, PromptSelector
     from utils.log_config import get_logger
+    from utils.ocr_test_helper import OCRTestManager
     
     logger = get_logger(__name__)
     
@@ -380,7 +381,8 @@ def render_unified_upload_results(include_validation):
                 
                 if success:
                     with st.expander(f"✅ {filename} - 処理成功", expanded=False):
-                        _display_success_result(result)
+                        # 拡張プレビュー機能付きタブ表示（本番アップロード用）
+                        render_enhanced_result_tabs(result, filename)
                 else:
                     with st.expander(f"❌ {filename} - 処理失敗", expanded=False):
                         _display_error_result(result)
@@ -410,12 +412,20 @@ def _display_success_result(result: Dict[str, Any]):
         with col1:
             st.write(f"• 供給者名: {extracted_data.get('issuer', 'N/A')}")
             st.write(f"• 請求書番号: {extracted_data.get('main_invoice_number', 'N/A')}")
+            st.write(f"• 受領書番号: {extracted_data.get('receipt_number', 'N/A')}")
+            st.write(f"• T番号: {extracted_data.get('t_number', 'N/A')}")
             st.write(f"• 通貨: {extracted_data.get('currency', 'JPY')}")
             
         with col2:
             st.write(f"• 請求先: {extracted_data.get('payer', 'N/A')}")
             st.write(f"• 税込金額: {extracted_data.get('amount_inclusive_tax', 'N/A')}")
             st.write(f"• 請求日: {extracted_data.get('issue_date', 'N/A')}")
+            # キー情報の簡易表示
+            key_info = extracted_data.get('key_info', {})
+            if key_info:
+                st.write(f"• キー情報: 有り（{len(key_info)}項目）")
+            else:
+                st.write(f"• キー情報: なし")
     
     # 検証結果表示
     validation_result = result.get('validation_result')
@@ -508,15 +518,8 @@ def render_ocr_test_results(include_validation):
             
             with st.expander(f"{status_icon} {filename}", expanded=False):
                 if result.get('extracted_data'):
-                    data = result['extracted_data']
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.write(f"**請求元**: {data.get('issuer', 'N/A')}")
-                        st.write(f"**請求書番号**: {data.get('invoice_number', 'N/A')}")
-                    with col2:
-                        amount = data.get('amount_inclusive_tax', 0)
-                        st.write(f"**税込金額**: ¥{amount:,}" if amount else "**税込金額**: N/A")
-                        st.write(f"**通貨**: {data.get('currency', 'JPY')}")
+                    # 詳細プレビュー機能付きタブ表示
+                    render_enhanced_result_tabs(result, filename)
                 
                 if result.get('error_message'):
                     st.error(f"エラー: {result['error_message']}")
@@ -575,3 +578,199 @@ def render_basic_ocr_results(results, include_validation):
             else:
                 st.success("✅ OCRテスト完了")
                 st.json(result) 
+
+
+def render_enhanced_result_tabs(result: Dict[str, Any], filename: str):
+    """拡張プレビュー機能付き結果表示（タブ分割）"""
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 基本情報", "📊 明細", "🔍 JSON", "📄 PDF"])
+    
+    extracted_data = result.get('extracted_data', {})
+    
+    with tab1:
+        # 基本情報表示（統一化フィールド対応）
+        render_basic_info_enhanced(extracted_data)
+    
+    with tab2:
+        # 明細情報表示
+        render_line_items_enhanced(extracted_data)
+    
+    with tab3:
+        # JSON詳細表示
+        render_json_preview_enhanced(result, extracted_data)
+    
+    with tab4:
+        # PDF プレビュー
+        render_pdf_preview_enhanced(result, filename)
+
+
+def render_basic_info_enhanced(extracted_data: Dict[str, Any]):
+    """拡張基本情報表示"""
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**📝 請求書情報**")
+        st.write(f"• 請求元: {extracted_data.get('issuer', 'N/A')}")
+        st.write(f"• 請求先: {extracted_data.get('payer', 'N/A')}")
+        st.write(f"• 請求書番号: {extracted_data.get('main_invoice_number', 'N/A')}")
+        st.write(f"• 受領書番号: {extracted_data.get('receipt_number', 'N/A')}")
+        st.write(f"• T番号: {extracted_data.get('t_number', 'N/A')}")
+    
+    with col2:
+        st.markdown("**💰 金額情報**")
+        amount_inc = extracted_data.get('amount_inclusive_tax', 0)
+        amount_exc = extracted_data.get('amount_exclusive_tax', 0)
+        tax_amount = extracted_data.get('tax_amount', 0)
+        
+        st.write(f"• 税込金額: ¥{amount_inc:,}" if amount_inc else "• 税込金額: N/A")
+        st.write(f"• 税抜金額: ¥{amount_exc:,}" if amount_exc else "• 税抜金額: N/A")
+        st.write(f"• 消費税額: ¥{tax_amount:,}" if tax_amount else "• 消費税額: N/A")
+        st.write(f"• 通貨: {extracted_data.get('currency', 'JPY')}")
+        st.write(f"• 請求日: {extracted_data.get('issue_date', 'N/A')}")
+    
+    # キー情報の表示
+    key_info = extracted_data.get('key_info', {})
+    if key_info:
+        st.markdown("**🔑 キー情報**")
+        if isinstance(key_info, dict) and key_info:
+            st.write(f"• 項目数: {len(key_info)}項目")
+            with st.expander("詳細を表示", expanded=False):
+                for key, value in key_info.items():
+                    st.write(f"  - {key}: {value}")
+        else:
+            st.write("• キー情報: なし")
+
+
+def render_line_items_enhanced(extracted_data: Dict[str, Any]):
+    """拡張明細表示"""
+    line_items = extracted_data.get('line_items', [])
+    
+    if line_items:
+        st.markdown(f"**📊 明細情報 ({len(line_items)}件)**")
+        
+        # DataFrameに変換
+        import pandas as pd
+        line_items_df = pd.DataFrame([
+            {
+                "No.": i+1,
+                "商品・サービス名": item.get("item_description", item.get("description", "")),
+                "数量": item.get("quantity", ""),
+                "単価": item.get("unit_price", ""),
+                "金額": item.get("amount", ""),
+                "税率": item.get("tax_rate", "")
+            }
+            for i, item in enumerate(line_items)
+        ])
+        
+        # ag-gridで表示
+        try:
+            from infrastructure.ui.aggrid_helper import get_aggrid_manager
+            aggrid_manager = get_aggrid_manager()
+            aggrid_manager.create_data_grid(
+                line_items_df,
+                editable=False,
+                fit_columns_on_grid_load=True,
+                height=300
+            )
+        except ImportError:
+            # ag-gridが利用できない場合は標準表示
+            st.dataframe(line_items_df, use_container_width=True)
+        except Exception as e:
+            st.warning(f"ag-grid表示エラー: {str(e)}")
+            st.dataframe(line_items_df, use_container_width=True)
+    else:
+        st.info("📋 このファイルには明細データがありません")
+
+
+def render_json_preview_enhanced(result: Dict[str, Any], extracted_data: Dict[str, Any]):
+    """拡張JSON表示"""
+    st.markdown("**🔍 抽出データ詳細**")
+    
+    # JSON表示オプション
+    col1, col2 = st.columns(2)
+    with col1:
+        show_extracted = st.checkbox("抽出データ", value=True, key=f"show_extracted_{id(result)}")
+    with col2:
+        show_raw = st.checkbox("生レスポンス", value=False, key=f"show_raw_{id(result)}")
+    
+    if show_extracted:
+        st.markdown("**📋 構造化抽出データ**")
+        st.json(extracted_data)
+    
+    if show_raw:
+        raw_response = result.get('raw_response', {})
+        if raw_response:
+            st.markdown("**🔧 AI生レスポンス**")
+            st.json(raw_response)
+        else:
+            st.info("生レスポンスデータがありません")
+    
+    # 検証結果があれば表示
+    validation_result = result.get('validation_result', {})
+    if validation_result:
+        st.markdown("**✅ 検証結果**")
+        st.json(validation_result)
+
+
+def render_pdf_preview_enhanced(result: Dict[str, Any], filename: str):
+    """拡張PDFプレビュー"""
+    st.markdown("**📄 PDF原本プレビュー**")
+    
+    # ファイル情報表示
+    file_info = result.get('file_info', {})
+    if file_info:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write(f"**ファイル名**: {filename}")
+            file_size = file_info.get('file_size', 0)
+            if file_size:
+                st.write(f"**ファイルサイズ**: {file_size:,} bytes")
+        with col2:
+            file_id = file_info.get('file_id', '')
+            if file_id:
+                st.write(f"**ファイルID**: {file_id}")
+    
+    # PDF表示の試行
+    if st.button(f"📄 {filename} を表示", key=f"show_pdf_{id(result)}"):
+        try:
+            # Google Driveからファイル取得を試行
+            google_drive = get_google_drive()
+            if google_drive and file_info.get('file_id'):
+                with st.spinner("PDFを読み込み中..."):
+                    # ファイルをダウンロード
+                    pdf_content = google_drive.download_file(file_info['file_id'])
+                    
+                    if pdf_content:
+                        # ダウンロードボタン
+                        st.download_button(
+                            label="📥 PDFをダウンロード",
+                            data=pdf_content,
+                            file_name=filename,
+                            mime="application/pdf",
+                            key=f"download_{id(result)}"
+                        )
+                        
+                        # PDFビューアー
+                        import base64
+                        base64_pdf = base64.b64encode(pdf_content).decode('utf-8')
+                        pdf_display = f'''
+                        <div style="border: 1px solid #ccc; border-radius: 5px; margin: 10px 0;">
+                            <iframe 
+                                src="data:application/pdf;base64,{base64_pdf}" 
+                                width="100%" 
+                                height="600px" 
+                                style="border: none;">
+                                <p>PDFを表示できません。ダウンロードしてご確認ください。</p>
+                            </iframe>
+                        </div>
+                        '''
+                        st.markdown(pdf_display, unsafe_allow_html=True)
+                        st.success("✅ PDF表示完了")
+                    else:
+                        st.error("📥 PDFファイルの取得に失敗しました")
+            else:
+                st.warning("🔧 Google Driveマネージャーまたはファイル情報が利用できません")
+                st.info("OCRテスト時のファイル情報が不足している可能性があります")
+        
+        except Exception as e:
+            st.error(f"PDF表示エラー: {str(e)}")
+            logger.error(f"PDF表示エラー: {e}") 

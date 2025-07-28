@@ -291,7 +291,7 @@ class DatabaseManager:
                 # 基本情報
                 'user_email': invoice_data.get('user_email', invoice_data.get('created_by', '')),
                 'file_name': invoice_data.get('file_name', ''),
-                # 'file_id': invoicesテーブルにfile_idフィールドは存在しない（削除）
+                'file_id': invoice_data.get('file_id', ''),  # 必須項目追加
                 'status': 'extracted',  # シンプルなステータス
                 
                 # JST時間を明示的に設定
@@ -326,8 +326,8 @@ class DatabaseManager:
                 'processing_time': invoice_data.get('processing_time'),
                 
                 # ファイル管理情報
-                'gdrive_file_id': invoice_data.get('file_id', ''),    # Google Drive ID（修正）
-                'file_path': invoice_data.get('file_path', ''),       # ファイルパス（修正）
+                'gdrive_file_id': invoice_data.get('file_path', ''),  # Google Drive ID
+                'file_path': invoice_data.get('gdrive_file_id', ''),
                 'file_size': invoice_data.get('file_size'),
                 
                 # AIモデル情報（設定ファイルから取得）

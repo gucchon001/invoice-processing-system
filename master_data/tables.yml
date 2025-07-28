@@ -193,4 +193,265 @@ tables:
         description: "レコード更新日時（JST）"
     business_rules:
       - "CASCADE DELETE: 請求書削除時に、関連する全明細も自動削除される"
-      - "金額計算の整合性: amount ≈ quantity × unit_price（丸め誤差を許容）" 
+      - "金額計算の整合性: amount ≈ quantity × unit_price（丸め誤差を許容）"
+
+  # OCRテスト系テーブル（統一化後）
+  ocr_test_sessions:
+    name: "ocr_test_sessions（OCRテストセッション）"
+    description: "OCRテスト実行履歴を管理するテーブル。バッチ処理の統計情報を保存。"
+    category: "ocr_testing"
+    sql_definition: |
+      CREATE TABLE IF NOT EXISTS ocr_test_sessions (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          session_name VARCHAR(255) NOT NULL,
+          folder_id VARCHAR(255) NOT NULL,
+          total_files INTEGER NOT NULL DEFAULT 0,
+          processed_files INTEGER NOT NULL DEFAULT 0,
+          success_files INTEGER NOT NULL DEFAULT 0,
+          failed_files INTEGER NOT NULL DEFAULT 0,
+          average_completeness DECIMAL(5,2),
+          success_rate DECIMAL(5,2),
+          processing_duration DECIMAL(10,2),
+          created_by VARCHAR(255) NOT NULL,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    columns:
+      - name: "id"
+        type: "UUID"
+        constraints: "PRIMARY KEY DEFAULT uuid_generate_v4()"
+        description: "セッション一意ID"
+      - name: "session_name"
+        type: "VARCHAR(255)"
+        constraints: "NOT NULL"
+        description: "セッション名"
+      - name: "folder_id"
+        type: "VARCHAR(255)"
+        constraints: "NOT NULL"
+        description: "Google DriveフォルダID"
+      - name: "total_files"
+        type: "INTEGER"
+        constraints: "NOT NULL DEFAULT 0"
+        description: "対象ファイル総数"
+      - name: "processed_files"
+        type: "INTEGER"
+        constraints: "NOT NULL DEFAULT 0"
+        description: "処理済みファイル数"
+      - name: "success_files"
+        type: "INTEGER"
+        constraints: "NOT NULL DEFAULT 0"
+        description: "成功ファイル数"
+      - name: "failed_files"
+        type: "INTEGER"
+        constraints: "NOT NULL DEFAULT 0"
+        description: "失敗ファイル数"
+      - name: "average_completeness"
+        type: "DECIMAL(5,2)"
+        description: "平均完全性スコア（%）"
+      - name: "success_rate"
+        type: "DECIMAL(5,2)"
+        description: "成功率（%）"
+      - name: "processing_duration"
+        type: "DECIMAL(10,2)"
+        description: "処理時間（秒）"
+      - name: "created_by"
+        type: "VARCHAR(255)"
+        constraints: "NOT NULL"
+        description: "セッション作成者"
+      - name: "created_at"
+        type: "TIMESTAMPTZ"
+        constraints: "DEFAULT NOW()"
+        description: "セッション作成日時"
+      - name: "updated_at"
+        type: "TIMESTAMPTZ"
+        constraints: "DEFAULT NOW()"
+        description: "セッション更新日時"
+
+  ocr_test_results:
+    name: "ocr_test_results（OCR処理結果詳細）"
+    description: "Gemini 2.0-flashによるOCR処理結果を記録するテーブル。統一化済みスキーマ。"
+    category: "ocr_testing"
+    migration_info:
+      last_updated: "2025-01-24"
+      alignment_script: "sql/ocr_test_tables_alignment.sql"
+      changes:
+        - "registration_number → t_number リネーム"
+        - "invoice_number → main_invoice_number リネーム"
+        - "receipt_number列追加"
+        - "key_info列追加"
+    sql_definition: |
+      CREATE TABLE IF NOT EXISTS ocr_test_results (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          session_id UUID REFERENCES ocr_test_sessions(id) ON DELETE CASCADE,
+          file_id VARCHAR(255) NOT NULL,
+          filename VARCHAR(255) NOT NULL,
+          file_size BIGINT,
+          -- OCR抽出結果（本番テーブルと統一）
+          issuer_name VARCHAR(255),
+          recipient_name VARCHAR(255),
+          main_invoice_number VARCHAR(255),      -- 統一化: invoice_number → main_invoice_number
+          receipt_number VARCHAR(255),           -- 統一化: 新規追加
+          t_number VARCHAR(50),                  -- 統一化: registration_number → t_number
+          currency VARCHAR(10),
+          total_amount_tax_included DECIMAL(15,2),
+          total_amount_tax_excluded DECIMAL(15,2),
+          issue_date DATE,
+          due_date DATE,
+          key_info JSONB,                        -- 統一化: 新規追加
+          -- 検証結果
+          is_valid BOOLEAN DEFAULT FALSE,
+          completeness_score DECIMAL(5,2),
+          validation_errors TEXT[],
+          validation_warnings TEXT[],
+          -- メタデータ
+          processing_time DECIMAL(8,2),
+          gemini_model VARCHAR(50) DEFAULT 'gemini-2.5-flash-lite-preview-06-17',
+          raw_response JSONB,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    columns:
+      - name: "id"
+        type: "UUID"
+        constraints: "PRIMARY KEY DEFAULT uuid_generate_v4()"
+        description: "結果一意ID"
+      - name: "session_id"
+        type: "UUID"
+        constraints: "REFERENCES ocr_test_sessions(id) ON DELETE CASCADE"
+        description: "セッションID"
+      - name: "file_id"
+        type: "VARCHAR(255)"
+        constraints: "NOT NULL"
+        description: "Google Drive File ID"
+      - name: "filename"
+        type: "VARCHAR(255)"
+        constraints: "NOT NULL"
+        description: "ファイル名"
+      - name: "file_size"
+        type: "BIGINT"
+        description: "ファイルサイズ（バイト）"
+      - name: "issuer_name"
+        type: "VARCHAR(255)"
+        description: "請求書発行者名"
+      - name: "recipient_name"
+        type: "VARCHAR(255)"
+        description: "請求先企業名"
+      - name: "main_invoice_number"
+        type: "VARCHAR(255)"
+        description: "メイン請求書番号（統一化済み）"
+      - name: "receipt_number"
+        type: "VARCHAR(255)"
+        description: "受領書番号（統一化で追加）"
+      - name: "t_number"
+        type: "VARCHAR(50)"
+        description: "適格請求書発行事業者登録番号（統一化済み）"
+      - name: "currency"
+        type: "VARCHAR(10)"
+        description: "通貨コード"
+      - name: "total_amount_tax_included"
+        type: "DECIMAL(15,2)"
+        description: "税込合計金額"
+      - name: "total_amount_tax_excluded"
+        type: "DECIMAL(15,2)"
+        description: "税抜合計金額"
+      - name: "issue_date"
+        type: "DATE"
+        description: "請求書発行日"
+      - name: "due_date"
+        type: "DATE"
+        description: "支払期日"
+      - name: "key_info"
+        type: "JSONB"
+        description: "キー情報（統一化で追加）"
+      - name: "is_valid"
+        type: "BOOLEAN"
+        constraints: "DEFAULT FALSE"
+        description: "全体検証結果フラグ"
+      - name: "completeness_score"
+        type: "DECIMAL(5,2)"
+        description: "データ完全性スコア（%）"
+      - name: "validation_errors"
+        type: "TEXT[]"
+        description: "検証エラーメッセージ配列"
+      - name: "validation_warnings"
+        type: "TEXT[]"
+        description: "検証警告メッセージ配列"
+      - name: "processing_time"
+        type: "DECIMAL(8,2)"
+        description: "AI処理時間（秒）"
+      - name: "gemini_model"
+        type: "VARCHAR(50)"
+        constraints: "DEFAULT 'gemini-2.5-flash-lite-preview-06-17'"
+        description: "使用したGeminiモデル"
+      - name: "raw_response"
+        type: "JSONB"
+        description: "生のAI応答データ"
+      - name: "created_at"
+        type: "TIMESTAMPTZ"
+        constraints: "DEFAULT NOW()"
+        description: "レコード作成日時"
+      - name: "updated_at"
+        type: "TIMESTAMPTZ"
+        constraints: "DEFAULT NOW()"
+        description: "レコード更新日時"
+
+  ocr_test_line_items:
+    name: "ocr_test_line_items（OCR抽出明細）"
+    description: "OCRテストで抽出された明細情報を格納するテーブル。統一化済みスキーマ。"
+    category: "ocr_testing"
+    migration_info:
+      last_updated: "2025-01-24"
+      alignment_script: "sql/ocr_test_tables_alignment.sql"
+      changes:
+        - "description → item_description リネーム"
+        - "tax_rate データ型: VARCHAR(10) → DECIMAL(5,2)"
+        - "updated_at列追加"
+    sql_definition: |
+      CREATE TABLE IF NOT EXISTS ocr_test_line_items (
+          id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+          result_id UUID REFERENCES ocr_test_results(id) ON DELETE CASCADE,
+          line_number INTEGER NOT NULL,
+          item_description TEXT,              -- 統一化: description → item_description
+          quantity DECIMAL(10,3),
+          unit_price DECIMAL(15,2),
+          amount DECIMAL(15,2),
+          tax_rate DECIMAL(5,2),              -- 統一化: VARCHAR(10) → DECIMAL(5,2)
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()  -- 統一化: 新規追加
+      );
+    columns:
+      - name: "id"
+        type: "UUID"
+        constraints: "PRIMARY KEY DEFAULT uuid_generate_v4()"
+        description: "明細一意ID"
+      - name: "result_id"
+        type: "UUID"
+        constraints: "REFERENCES ocr_test_results(id) ON DELETE CASCADE"
+        description: "OCRテスト結果ID"
+      - name: "line_number"
+        type: "INTEGER"
+        constraints: "NOT NULL"
+        description: "明細行番号"
+      - name: "item_description"
+        type: "TEXT"
+        description: "商品・サービス名（統一化済み）"
+      - name: "quantity"
+        type: "DECIMAL(10,3)"
+        description: "数量"
+      - name: "unit_price"
+        type: "DECIMAL(15,2)"
+        description: "単価"
+      - name: "amount"
+        type: "DECIMAL(15,2)"
+        description: "金額"
+      - name: "tax_rate"
+        type: "DECIMAL(5,2)"
+        description: "税率（%、統一化済み）"
+      - name: "created_at"
+        type: "TIMESTAMPTZ"
+        constraints: "DEFAULT NOW()"
+        description: "レコード作成日時"
+      - name: "updated_at"
+        type: "TIMESTAMPTZ"
+        constraints: "DEFAULT NOW()"
+        description: "レコード更新日時（統一化で追加）" 

@@ -335,7 +335,7 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
             for i, item in enumerate(line_items, 1):
                 details_data.append({
                     "No.": i,
-                    "商品・サービス名": item.get("description", ""),
+                    "商品・サービス名": item.get("item_description", item.get("description", "")),
                     "数量": item.get("quantity", ""),
                     "単価": item.get("unit_price", ""),
                     "金額": item.get("amount", ""),
@@ -527,8 +527,8 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
                     "issuer_name": ocr_result.get("issuer"),                    # JSONプロンプト版
                     "recipient_name": ocr_result.get("payer"),                  # JSONプロンプト版
                     "receipt_number": ocr_result.get("receipt_number"),
-                    "invoice_number": ocr_result.get("main_invoice_number"),    # JSONプロンプト版
-                    "registration_number": ocr_result.get("t_number"),          # JSONプロンプト版
+                    "main_invoice_number": ocr_result.get("main_invoice_number"),    # JSONプロンプト版
+                    "t_number": ocr_result.get("t_number"),          # JSONプロンプト版
                     "currency": ocr_result.get("currency"),
                     "total_amount_tax_included": ocr_result.get("amount_inclusive_tax"),  # JSONプロンプト版
                     "total_amount_tax_excluded": ocr_result.get("amount_exclusive_tax"),  # JSONプロンプト版
@@ -704,7 +704,7 @@ PDFの内容を詳細に分析し、上記のJSON形式で結果を返してく�
             line_items_df = pd.DataFrame([
                 {
                     "No.": i+1,
-                    "商品・サービス名": item.get("description", ""),
+                    "商品・サービス名": item.get("item_description", item.get("description", "")),
                     "数量": item.get("quantity", ""),
                     "単価": item.get("unit_price", ""),
                     "金額": item.get("amount", ""),

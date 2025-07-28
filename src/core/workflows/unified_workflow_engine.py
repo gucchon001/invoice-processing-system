@@ -375,7 +375,7 @@ class UnifiedWorkflowEngine:
                 "issuer_name": extracted_data.get("issuer"),
                 "total_amount_tax_included": extracted_data.get("amount_inclusive_tax"),
                 "issue_date": extracted_data.get("issue_date"),
-                "invoice_number": extracted_data.get("main_invoice_number")
+                "main_invoice_number": extracted_data.get("main_invoice_number")  # 統一化フィールド復活
             }
             
             # データベースに保存
