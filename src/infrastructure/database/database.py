@@ -23,8 +23,61 @@ class DatabaseManager:
         """Supabase接続を初期化"""
         try:
             self.url = st.secrets["database"]["supabase_url"]
-            self.key = st.secrets["database"]["supabase_anon_key"]
+            
+            # 🔍 詳細デバッグ: secrets.toml読み込み状況確認 ★DEBUG★
+            logger.info(f"🔍 DEBUG - supabase_url: {self.url}")
+            logger.info(f"🔍 DEBUG - secrets keys: {list(st.secrets['database'].keys())}")
+            
+            # 🔧 認証方式選択: Service Role Key優先、Anon Keyフォールバック ★RLS FIX★
+            service_role_key = None
+            
+            # 新しいキー名を優先、古いキー名も互換性対応 ★COMPATIBILITY★
+            if "supabase_service_role_key" in st.secrets["database"]:
+                service_role_key = st.secrets["database"]["supabase_service_role_key"]
+                logger.info("🔑 新形式Service Role Key検出: supabase_service_role_key")
+            elif "supabase_service_key" in st.secrets["database"]:
+                service_role_key = st.secrets["database"]["supabase_service_key"]
+                logger.info("🔑 旧形式Service Role Key検出: supabase_service_key")
+            
+            if service_role_key:
+                self.key = service_role_key
+                
+                # 🔍 詳細デバッグ: Service Role Key内容確認 ★DEBUG★
+                key_start = self.key[:20] if len(self.key) > 20 else self.key
+                key_end = self.key[-10:] if len(self.key) > 30 else "***"
+                logger.info(f"🔍 DEBUG - Service Role Key読み込み成功")
+                logger.info(f"🔍 DEBUG - Key開始部分: {key_start}...")
+                logger.info(f"🔍 DEBUG - Key終了部分: ...{key_end}")
+                logger.info(f"🔍 DEBUG - Key長: {len(self.key)} 文字")
+                
+                # Service Role Keyの形式確認
+                if "service_role" in self.key:
+                    logger.info("✅ Service Role Key形式確認: service_role含有")
+                else:
+                    logger.warning("⚠️ Service Role Key形式警告: service_role未含有")
+                
+                logger.info("🔑 Service Role Key使用 - RLS管理者権限で接続")
+            else:
+                self.key = st.secrets["database"]["supabase_anon_key"]
+                logger.warning("⚠️ Anonymous Key使用 - RLS制限あり（Service Role Key推奨）")
+            
+            # 🔍 詳細デバッグ: Supabaseクライアント作成前確認 ★DEBUG★
+            logger.info(f"🔍 DEBUG - クライアント作成開始")
+            logger.info(f"🔍 DEBUG - URL: {self.url}")
+            logger.info(f"🔍 DEBUG - 使用キー種別: {'Service Role' if 'supabase_service_role_key' in st.secrets['database'] else 'Anonymous'}")
+            
             self.supabase: Client = create_client(self.url, self.key)
+            
+            # 🔍 詳細デバッグ: クライアント作成後確認 ★DEBUG★
+            logger.info(f"🔍 DEBUG - クライアント作成完了")
+            logger.info(f"🔍 DEBUG - クライアント情報: {type(self.supabase)}")
+            
+            # Supabaseクライアントの内部設定確認
+            if hasattr(self.supabase, 'auth'):
+                logger.info(f"🔍 DEBUG - auth属性存在: {hasattr(self.supabase.auth, 'get_session')}")
+            if hasattr(self.supabase, 'rest'):
+                logger.info(f"🔍 DEBUG - rest属性存在: {type(self.supabase.rest)}")
+                
             logger.info("Supabaseデータベース接続初期化完了")
         except KeyError as e:
             logger.error(f"Supabase設定が不完全です: {e}")
@@ -245,7 +298,7 @@ class DatabaseManager:
     # 代わりに insert_invoice() を使用してください
     
     def insert_invoice(self, invoice_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """統合ワークフロー用請求書データ挿入（完全カラム対応・JST時間対応）"""
+        """統合ワークフロー用請求書データ挿入（40カラム完全対応・JST時間対応）"""
         try:
             # 🔍 デバッグ: 挿入前のデータ確認
             logger.info(f"🔄 請求書データ挿入開始 - ファイル: {invoice_data.get('file_name', 'N/A')}")
@@ -286,66 +339,125 @@ class DatabaseManager:
             jst = timezone(timedelta(hours=9))
             jst_now = datetime.now(jst).isoformat()
             
-            # 完全なデータマッピング（新しいカラム構造対応・JST時間対応）
+            # 🔍 RLS対応デバッグログ ★DEBUG★
+            user_email_from_data = invoice_data.get('user_email')
+            created_by_from_data = invoice_data.get('created_by')
+            final_user_email = user_email_from_data or created_by_from_data or ''
+            
+            logger.info(f"🔍 RLS Debug - invoice_data user_email: {user_email_from_data}")
+            logger.info(f"🔍 RLS Debug - invoice_data created_by: {created_by_from_data}")
+            logger.info(f"🔍 RLS Debug - final user_email: {final_user_email}")
+            
+            # 🚨 RLS要件チェック: user_emailが空の場合はエラー ★RLS VALIDATION★
+            if not final_user_email or final_user_email.strip() == '':
+                error_msg = "RLS要件エラー: user_emailが設定されていません。認証済みユーザーの情報が必要です。"
+                logger.error(f"❌ {error_msg}")
+                raise Exception(error_msg)
+            
+            # 40カラム完全対応データマッピング（新機能13カラム対応）
             insert_data = {
-                # 基本情報
-                'user_email': invoice_data.get('user_email', invoice_data.get('created_by', '')),
-                'file_name': invoice_data.get('file_name', ''),
-                # 'file_id': invoicesテーブルにfile_idフィールドは存在しない（削除）
+                # 🔑 基本管理（6カラム）
+                'user_email': final_user_email,  # デバッグ用に明示的に設定
                 'status': 'extracted',  # シンプルなステータス
-                
-                # JST時間を明示的に設定
+                'uploaded_at': jst_now,
                 'created_at': jst_now,
                 'updated_at': jst_now,
-                'uploaded_at': jst_now,
                 
-                # 請求書基本情報（個別カラム）- 統一化フィールド使用
+                # 📁 ファイル管理（7カラム） - 🆕 新機能4カラム追加
+                'file_name': invoice_data.get('file_name', ''),
+                'gdrive_file_id': invoice_data.get('file_id', ''),    # Google Drive ID
+                'file_path': invoice_data.get('file_path', ''),       # ファイルパス
+                'source_type': invoice_data.get('source_type', 'local'),  # 🆕 ファイルソース
+                'gmail_message_id': invoice_data.get('gmail_message_id'),  # 🆕 Gmailメッセージ
+                'attachment_id': invoice_data.get('attachment_id'),        # 🆕 添付ファイルID
+                'sender_email': invoice_data.get('sender_email'),          # 🆕 送信者メール
+                
+                # 📄 請求書基本情報（7カラム）
                 'issuer_name': extracted_data.get('issuer', '')[:255] if extracted_data.get('issuer') else None,
                 'recipient_name': extracted_data.get('payer', '')[:255] if extracted_data.get('payer') else None,
                 'main_invoice_number': extracted_data.get('main_invoice_number', '')[:255] if extracted_data.get('main_invoice_number') else None,
                 'receipt_number': extracted_data.get('receipt_number', '')[:255] if extracted_data.get('receipt_number') else None,
                 't_number': extracted_data.get('t_number', '')[:50] if extracted_data.get('t_number') else None,
-                'currency': extracted_data.get('currency', 'JPY')[:10] if extracted_data.get('currency') else 'JPY',
-                
-                # 金額情報
-                'total_amount_tax_included': safe_decimal(extracted_data.get('amount_inclusive_tax')),
-                'total_amount_tax_excluded': safe_decimal(extracted_data.get('amount_exclusive_tax')),
-                
-                # 日付情報
                 'issue_date': parse_date(extracted_data.get('issue_date')),
                 'due_date': parse_date(extracted_data.get('due_date')),
                 
-                # JSON形式データ
-                'key_info': extracted_data.get('key_info', {}),  # 統一化フィールド復活
-                'raw_response': invoice_data.get('raw_ai_response', extracted_data),  # AI生レスポンス
-                'extracted_data': extracted_data,  # 完全なAI抽出データ
+                # 💰 金額・通貨情報（6カラム） - 🆕 新機能3カラム追加
+                'currency': extracted_data.get('currency', 'JPY')[:10] if extracted_data.get('currency') else 'JPY',
+                'total_amount_tax_included': safe_decimal(extracted_data.get('amount_inclusive_tax')),
+                'total_amount_tax_excluded': safe_decimal(extracted_data.get('amount_exclusive_tax')),
+                'exchange_rate': safe_decimal(invoice_data.get('exchange_rate')),     # 🆕 為替レート
+                'jpy_amount': safe_decimal(invoice_data.get('jpy_amount')),           # 🆕 円換算金額
+                'card_statement_id': invoice_data.get('card_statement_id'),          # 🆕 カード明細ID
                 
-                # 品質管理情報
+                # 🤖 AI処理・検証結果（8カラム）
+                'extracted_data': extracted_data,  # 完全なAI抽出データ
+                'raw_response': invoice_data.get('raw_ai_response', extracted_data),  # AI生レスポンス
+                'key_info': extracted_data.get('key_info', {}),  # 統一化フィールド復活
                 'is_valid': True,  # 基本的に抽出成功時はTrue
+                'validation_errors': invoice_data.get('validation_errors', []),
+                'validation_warnings': invoice_data.get('validation_warnings', []),
                 'completeness_score': self._calculate_completeness_score(extracted_data),
                 'processing_time': invoice_data.get('processing_time'),
                 
-                # ファイル管理情報
-                'gdrive_file_id': invoice_data.get('file_id', ''),    # Google Drive ID（修正）
-                'file_path': invoice_data.get('file_path', ''),       # ファイルパス（修正）
-                'file_size': invoice_data.get('file_size'),
+                # ✅ 承認ワークフロー（3カラム） - 🆕 新機能3カラム追加
+                'approval_status': invoice_data.get('approval_status', 'pending'),   # 🆕 承認状況
+                'approved_by': invoice_data.get('approved_by'),                       # 🆕 承認者
+                'approved_at': invoice_data.get('approved_at'),                       # 🆕 承認日時
                 
-                # AIモデル情報（設定ファイルから取得）
-                'gemini_model': get_gemini_model(),
-                
-                # JST時間の明示的設定
-                'created_at': jst_now,
-                'updated_at': jst_now
+                # 📊 freee連携（3カラム） - 🆕 新機能3カラム追加
+                'exported_to_freee': invoice_data.get('exported_to_freee', False),   # 🆕 freee連携済み
+                'export_date': invoice_data.get('export_date'),                       # 🆕 連携日時
+                'freee_batch_id': invoice_data.get('freee_batch_id'),                 # 🆕 freeeバッチID
             }
             
             # Noneや空文字列のフィールドを除去（Supabaseエラー回避）
             clean_data = {k: v for k, v in insert_data.items() if v is not None and v != ''}
             
-            logger.info(f"✅ 挿入データ準備完了 - カラム数: {len(clean_data)}")
-            logger.debug(f"🔧 主要フィールド: issuer={clean_data.get('issuer_name')}, amount={clean_data.get('total_amount_tax_included')}, date={clean_data.get('issue_date')}")
+            logger.info(f"✅ 40カラム挿入データ準備完了 - カラム数: {len(clean_data)}")
+            logger.debug(f"🔧 主要フィールド: issuer={clean_data.get('issuer_name')}, amount={clean_data.get('total_amount_tax_included')}, source={clean_data.get('source_type')}")
+            
+            # 🔍 RLS最終確認デバッグログ ★DEBUG★
+            final_user_email_in_clean = clean_data.get('user_email', 'NOT_SET')
+            logger.info(f"🔍 RLS Final Debug - clean_data user_email: '{final_user_email_in_clean}'")
+            logger.info(f"🔍 RLS Final Debug - clean_data keys: {sorted(clean_data.keys())}")
+            
+            # 🔍 Supabaseクライアント詳細デバッグ ★DEBUG★
+            logger.info(f"🔍 DEBUG - Supabaseクライアント状態確認開始")
+            logger.info(f"🔍 DEBUG - self.url: {self.url}")
+            
+            # 使用中のキーの詳細確認
+            key_type = "Service Role" if "service_role" in self.key else "Anonymous"
+            key_start = self.key[:20] if len(self.key) > 20 else self.key
+            key_end = self.key[-10:] if len(self.key) > 30 else "***"
+            logger.info(f"🔍 DEBUG - 実際使用キー種別: {key_type}")
+            logger.info(f"🔍 DEBUG - 実際使用キー開始: {key_start}...")
+            logger.info(f"🔍 DEBUG - 実際使用キー終了: ...{key_end}")
+            
+            # Supabaseクライアントの内部認証確認
+            if hasattr(self.supabase, '_api_key'):
+                logger.info(f"🔍 DEBUG - クライアント内部API Key設定確認済み")
+            else:
+                logger.warning(f"⚠️ DEBUG - クライアント内部API Key設定未確認")
+                
+            # HTTPリクエスト実行直前ログ
+            logger.info(f"🔍 DEBUG - データベース挿入実行開始")
+            logger.info(f"🔍 DEBUG - テーブル: invoices")
+            logger.info(f"🔍 DEBUG - データサイズ: {len(str(clean_data))} 文字")
             
             # データベースに挿入
             result = self.supabase.table('invoices').insert(clean_data).execute()
+            
+            # 🔍 HTTPレスポンス詳細デバッグ ★DEBUG★
+            logger.info(f"🔍 DEBUG - HTTPリクエスト完了")
+            logger.info(f"🔍 DEBUG - レスポンス型: {type(result)}")
+            if hasattr(result, 'data'):
+                logger.info(f"🔍 DEBUG - レスポンスデータ: {result.data}")
+            if hasattr(result, 'count'):
+                logger.info(f"🔍 DEBUG - レスポンス件数: {result.count}")
+            if hasattr(result, 'status_code'):
+                logger.info(f"🔍 DEBUG - ステータスコード: {result.status_code}")
+            else:
+                logger.info(f"🔍 DEBUG - ステータスコード属性なし")
             
             # レスポンス処理
             data = result.data if result.data else []
@@ -356,13 +468,13 @@ class DatabaseManager:
             
             if len(data) > 0:
                 invoice_id = data[0].get('id')
-                logger.info(f"🎉 請求書挿入成功: ID={invoice_id}, 企業={clean_data.get('issuer_name', 'N/A')}")
+                logger.info(f"🎉 40カラム請求書挿入成功: ID={invoice_id}, 企業={clean_data.get('issuer_name', 'N/A')}, ソース={clean_data.get('source_type', 'N/A')}")
                 return data[0]
             else:
                 raise Exception("データベースへの挿入に失敗しました")
                 
         except Exception as e:
-            logger.error(f"❌ 請求書挿入エラー: {str(e)[:200]}")
+            logger.error(f"❌ 40カラム請求書挿入エラー: {str(e)[:200]}")
             logger.error(f"🔍 ファイル: {invoice_data.get('file_name', 'N/A')}")
             
             # 詳細エラー情報

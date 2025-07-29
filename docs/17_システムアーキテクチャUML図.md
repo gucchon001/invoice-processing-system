@@ -1,10 +1,11 @@
 # 🏗️ システムアーキテクチャUML図
 
 **作成日**: 2025年1月24日  
-**最終更新**: 2025年7月27日  
-**バージョン**: 1.2  
+**最終更新**: 2025年7月28日  
+**バージョン**: 2.0  
 **対象システム**: 請求書処理自動化システム
 
+**v2.0更新内容**: 40カラム新機能アーキテクチャ完全対応・Gmail連携・外貨換算・承認ワークフロー・freee連携コンポーネント追加  
 **v1.2更新内容**: 統一スキーマ完全再構築対応・日付統一  
 **v1.1更新内容**: 関連ドキュメントリンクを統一フォーマット化（3カテゴリ分類）
 
@@ -12,97 +13,156 @@
 
 本ドキュメントは請求書処理自動化システムのシステムアーキテクチャをUML図で可視化し、各コンポーネントの関係性と責任範囲を明確に示します。
 
+**🎉 2025年7月28日更新**: **40カラム新機能アーキテクチャ完全対応**により、Gmail連携・外貨換算・承認ワークフロー・freee連携の新機能コンポーネントが追加され、マルチソース処理・多通貨対応・承認制御・会計連携を統合したエンタープライズレベルのUMLアーキテクチャ図が完成しました。
+
 ## 🏗️ 全体システムアーキテクチャ図
 
-### レイヤードアーキテクチャ構成
+### レイヤードアーキテクチャ構成（v2.0 40カラム新機能対応）
 
 ```mermaid
 graph TB
-    subgraph "🌐 外部システム層"
+    subgraph "🌐 外部システム層（v2.0拡張）"
         USER[ユーザー]
         GOOGLE[Google Services]
+        GMAIL[Gmail API]
+        EXCHANGE[Exchange Rate API]
+        FREEE[freee API]
+        SLACK[Slack/Teams/Email API]
         INTERNET[インターネット]
     end
     
-    subgraph "📱 プレゼンテーション層"
+    subgraph "📱 プレゼンテーション層（40カラム対応）"
         UI[Streamlit UI]
         AUTH[Google OAuth Handler]
         PAGES[ページコンポーネント]
         SESSION[セッション管理]
+        GMAIL_UI[Gmail連携UI ★v2.0 NEW★]
+        CURRENCY_UI[外貨換算UI ★v2.0 NEW★]
+        APPROVAL_UI[承認ワークフローUI ★v2.0 NEW★]
+        FREEE_UI[freee連携UI ★v2.0 NEW★]
     end
     
-    subgraph "🧠 ビジネスロジック層"
+    subgraph "🧠 ビジネスロジック層（40カラム新機能統合）"
         UWE[統一ワークフローエンジン<br/>UnifiedWorkflowEngine]
         SERVICES[サービス層]
         MODELS[データモデル層]
         VALIDATION[検証・バリデーション]
+        GMAIL_SVC[Gmail統合サービス ★v2.0 NEW★]
+        CURRENCY_SVC[通貨換算サービス ★v2.0 NEW★]
+        APPROVAL_SVC[承認制御サービス ★v2.0 NEW★]
+        FREEE_SVC[freee連携サービス ★v2.0 NEW★]
     end
     
-    subgraph "🔧 インフラストラクチャ層"
-        DATABASE[データベース<br/>Supabase PostgreSQL]
-        AI[AI処理<br/>Gemini API]
+    subgraph "🔧 インフラストラクチャ層（40カラム完全対応）"
+        DATABASE[データベース<br/>Supabase PostgreSQL<br/>40カラム対応]
+        AI[AI処理<br/>Gemini API<br/>新機能プロンプト5種]
         STORAGE[ファイルストレージ<br/>Google Drive API]
-        AGGRID[UI拡張<br/>ag-Grid]
+        AGGRID[UI拡張<br/>ag-Grid<br/>新機能タブ対応]
+        GMAIL_MGR[Gmail API連携 ★v2.0 NEW★]
+        EXCHANGE_MGR[為替レートAPI連携 ★v2.0 NEW★]
+        FREEE_MGR[freee API連携 ★v2.0 NEW★]
+        NOTIFICATION[通知API連携 ★v2.0 NEW★]
     end
     
-    %% 外部からの接続
+    %% 外部からの接続（v2.0拡張）
     USER --> UI
     GOOGLE --> AUTH
+    GMAIL --> GMAIL_MGR
+    EXCHANGE --> EXCHANGE_MGR
+    FREEE --> FREEE_MGR
+    SLACK --> NOTIFICATION
     INTERNET --> AI
     INTERNET --> DATABASE
     
-    %% プレゼンテーション層内の関係
+    %% プレゼンテーション層内の関係（v2.0拡張）
     UI --> AUTH
     UI --> PAGES
     UI --> SESSION
+    UI --> GMAIL_UI
+    UI --> CURRENCY_UI
+    UI --> APPROVAL_UI
+    UI --> FREEE_UI
     
-    %% ビジネスロジック層への接続
+    %% ビジネスロジック層への接続（40カラム対応）
     PAGES --> UWE
+    GMAIL_UI --> GMAIL_SVC
+    CURRENCY_UI --> CURRENCY_SVC
+    APPROVAL_UI --> APPROVAL_SVC
+    FREEE_UI --> FREEE_SVC
     UWE --> SERVICES
     UWE --> MODELS
     UWE --> VALIDATION
+    UWE --> GMAIL_SVC
+    UWE --> CURRENCY_SVC
+    UWE --> APPROVAL_SVC
+    UWE --> FREEE_SVC
     
-    %% インフラストラクチャ層への接続
+    %% インフラストラクチャ層への接続（40カラム完全対応）
     UWE --> DATABASE
     UWE --> AI
     UWE --> STORAGE
     UI --> AGGRID
+    GMAIL_SVC --> GMAIL_MGR
+    CURRENCY_SVC --> EXCHANGE_MGR
+    APPROVAL_SVC --> NOTIFICATION
+    FREEE_SVC --> FREEE_MGR
     
-    %% データフロー
+    %% データフロー（40カラム対応）
     STORAGE --> AI
+    GMAIL_MGR --> AI
     AI --> DATABASE
     DATABASE --> AGGRID
+    EXCHANGE_MGR --> DATABASE
+    FREEE_MGR --> DATABASE
     
-    %% スタイリング
+    %% スタイリング（v2.0強化）
     style UWE fill:#90EE90,stroke:#333,stroke-width:3px
     style UI fill:#87CEEB,stroke:#333,stroke-width:2px
     style DATABASE fill:#FFB6C1,stroke:#333,stroke-width:2px
     style AI fill:#DDA0DD,stroke:#333,stroke-width:2px
     style STORAGE fill:#F0E68C,stroke:#333,stroke-width:2px
+    style GMAIL_UI fill:#FF6B6B,stroke:#333,stroke-width:2px
+    style CURRENCY_UI fill:#4ECDC4,stroke:#333,stroke-width:2px
+    style APPROVAL_UI fill:#45B7D1,stroke:#333,stroke-width:2px
+    style FREEE_UI fill:#96CEB4,stroke:#333,stroke-width:2px
 ```
 
 ## 📦 コンポーネント構成図
 
-### プレゼンテーション層の詳細構成
+### プレゼンテーション層の詳細構成（v2.0 40カラム新機能対応）
 
 ```mermaid
 graph TD
-    subgraph "📱 Streamlit アプリケーション"
-        MAIN[app.py<br/>メインアプリ]
-        SIDEBAR[components/sidebar.py<br/>サイドバー]
+    subgraph "📱 Streamlit アプリケーション（40カラム対応）"
+        MAIN[app.py<br/>メインアプリ<br/>v2.0拡張]
+        SIDEBAR[components/sidebar.py<br/>サイドバー<br/>新機能メニュー追加]
     end
     
-    subgraph "📄 ページコンポーネント"
-        INVOICE[pages/invoice_processing.py<br/>請求書処理]
-        TEST[pages/test_pages.py<br/>テストページ]
-        SETTINGS[pages/settings.py<br/>設定・ダッシュボード]
+    subgraph "📄 ページコンポーネント（v2.0拡張）"
+        INVOICE[pages/invoice_processing.py<br/>請求書処理<br/>40カラム対応]
+        TEST[pages/test_pages.py<br/>テストページ<br/>レプリケーション対応]
+        SETTINGS[pages/settings.py<br/>設定・ダッシュボード<br/>新機能設定追加]
+        GMAIL_PAGE[pages/gmail_integration.py<br/>Gmail連携ページ ★v2.0 NEW★]
+        CURRENCY_PAGE[pages/currency_conversion.py<br/>外貨換算ページ ★v2.0 NEW★]
+        APPROVAL_PAGE[pages/approval_workflow.py<br/>承認ワークフローページ ★v2.0 NEW★]
+        FREEE_PAGE[pages/freee_integration.py<br/>freee連携ページ ★v2.0 NEW★]
     end
     
-    subgraph "🔐 認証システム"
-        OAUTH[auth/oauth_handler.py<br/>Google OAuth]
-        SESSION_MGR[セッション管理]
+    subgraph "🔐 認証システム（v2.0強化）"
+        OAUTH[auth/oauth_handler.py<br/>Google OAuth<br/>Gmail OAuth統合]
+        SESSION_MGR[セッション管理<br/>40カラム対応]
+        GMAIL_AUTH[auth/gmail_oauth.py<br/>Gmail認証 ★v2.0 NEW★]
+        FREEE_AUTH[auth/freee_oauth.py<br/>freee認証 ★v2.0 NEW★]
     end
     
+    subgraph "🎨 UI拡張コンポーネント（v2.0 NEW）"
+        MULTI_SOURCE[components/multi_source_selector.py<br/>マルチソース選択]
+        CURRENCY_DISPLAY[components/currency_display.py<br/>外貨表示]
+        APPROVAL_ACTIONS[components/approval_actions.py<br/>承認アクション]
+        FREEE_STATUS[components/freee_status.py<br/>freee連携状況]
+    end
+    
+    %% 基本接続
     MAIN --> SIDEBAR
     MAIN --> INVOICE
     MAIN --> TEST
@@ -110,33 +170,68 @@ graph TD
     MAIN --> OAUTH
     OAUTH --> SESSION_MGR
     
+    %% v2.0新機能接続
+    MAIN --> GMAIL_PAGE
+    MAIN --> CURRENCY_PAGE
+    MAIN --> APPROVAL_PAGE
+    MAIN --> FREEE_PAGE
+    
+    OAUTH --> GMAIL_AUTH
+    OAUTH --> FREEE_AUTH
+    
+    INVOICE --> MULTI_SOURCE
+    INVOICE --> CURRENCY_DISPLAY
+    INVOICE --> APPROVAL_ACTIONS
+    INVOICE --> FREEE_STATUS
+    
+    %% 認証連携
+    GMAIL_PAGE --> GMAIL_AUTH
+    FREEE_PAGE --> FREEE_AUTH
+    
+    %% スタイリング
     style MAIN fill:#87CEEB
     style OAUTH fill:#FFD700
+    style GMAIL_PAGE fill:#FF6B6B
+    style CURRENCY_PAGE fill:#4ECDC4
+    style APPROVAL_PAGE fill:#45B7D1
+    style FREEE_PAGE fill:#96CEB4
 ```
 
-### ビジネスロジック層の詳細構成
+### ビジネスロジック層の詳細構成（v2.0 40カラム新機能対応）
 
 ```mermaid
 graph TD
-    subgraph "🧠 統一ワークフローエンジン"
-        UWE[UnifiedWorkflowEngine<br/>統一処理エンジン]
-        PROGRESS[進捗管理システム]
-        CALLBACK[コールバック管理]
+    subgraph "🧠 統一ワークフローエンジン（40カラム対応）"
+        UWE[UnifiedWorkflowEngine<br/>統一処理エンジン<br/>v2.0拡張]
+        PROGRESS[進捗管理システム<br/>新機能対応]
+        CALLBACK[コールバック管理<br/>40カラム対応]
     end
     
-    subgraph "🔧 コアサービス"
-        PROMPT_MGR[UnifiedPromptManager<br/>プロンプト管理]
-        PROMPT_SEL[PromptSelector<br/>プロンプト選択]
-        VALIDATOR[InvoiceValidator<br/>検証システム]
-        DISPLAY[WorkflowDisplayManager<br/>表示管理]
+    subgraph "🔧 コアサービス（v2.0拡張）"
+        PROMPT_MGR[UnifiedPromptManager<br/>プロンプト管理<br/>新機能プロンプト5種]
+        PROMPT_SEL[PromptSelector<br/>プロンプト選択<br/>40カラム対応]
+        VALIDATOR[InvoiceValidator<br/>検証システム<br/>新機能検証]
+        DISPLAY[WorkflowDisplayManager<br/>表示管理<br/>新機能UI対応]
     end
     
-    subgraph "📊 データモデル"
-        WORKFLOW_MODEL[WorkflowModels<br/>ワークフローモデル]
-        RESULT_MODEL[ResultModels<br/>結果モデル]
-        PROGRESS_MODEL[ProgressModels<br/>進捗モデル]
+    subgraph "🎯 新機能サービス（v2.0 NEW）"
+        GMAIL_SVC[GmailIntegrationService<br/>Gmail統合サービス]
+        CURRENCY_SVC[CurrencyConversionService<br/>通貨換算サービス]
+        APPROVAL_SVC[ApprovalControlService<br/>承認制御サービス]
+        FREEE_SVC[FreeeIntegrationService<br/>freee連携サービス]
     end
     
+    subgraph "📊 データモデル（40カラム対応）"
+        WORKFLOW_MODEL[WorkflowModels<br/>ワークフローモデル<br/>基本+新機能]
+        RESULT_MODEL[ResultModels<br/>結果モデル<br/>40カラム対応]
+        PROGRESS_MODEL[ProgressModels<br/>進捗モデル<br/>新機能進捗]
+        GMAIL_MODEL[GmailModels<br/>Gmail連携モデル ★v2.0 NEW★]
+        CURRENCY_MODEL[CurrencyModels<br/>外貨換算モデル ★v2.0 NEW★]
+        APPROVAL_MODEL[ApprovalModels<br/>承認WFモデル ★v2.0 NEW★]
+        FREEE_MODEL[FreeeModels<br/>freee連携モデル ★v2.0 NEW★]
+    end
+    
+    %% 基本接続
     UWE --> PROGRESS
     UWE --> CALLBACK
     UWE --> PROMPT_MGR
@@ -144,48 +239,115 @@ graph TD
     UWE --> VALIDATOR
     UWE --> DISPLAY
     
+    %% v2.0新機能接続
+    UWE --> GMAIL_SVC
+    UWE --> CURRENCY_SVC
+    UWE --> APPROVAL_SVC
+    UWE --> FREEE_SVC
+    
+    %% サービス間連携
     PROMPT_SEL --> PROMPT_MGR
+    GMAIL_SVC --> PROMPT_MGR
+    CURRENCY_SVC --> PROMPT_MGR
+    APPROVAL_SVC --> PROMPT_MGR
+    FREEE_SVC --> PROMPT_MGR
+    
+    %% データモデル接続
     UWE --> WORKFLOW_MODEL
     UWE --> RESULT_MODEL
     PROGRESS --> PROGRESS_MODEL
+    GMAIL_SVC --> GMAIL_MODEL
+    CURRENCY_SVC --> CURRENCY_MODEL
+    APPROVAL_SVC --> APPROVAL_MODEL
+    FREEE_SVC --> FREEE_MODEL
     
+    %% 新機能間の連携
+    GMAIL_SVC --> CURRENCY_SVC
+    CURRENCY_SVC --> APPROVAL_SVC
+    APPROVAL_SVC --> FREEE_SVC
+    
+    %% スタイリング
     style UWE fill:#90EE90,stroke:#333,stroke-width:3px
+    style GMAIL_SVC fill:#FF6B6B,stroke:#333,stroke-width:2px
+    style CURRENCY_SVC fill:#4ECDC4,stroke:#333,stroke-width:2px
+    style APPROVAL_SVC fill:#45B7D1,stroke:#333,stroke-width:2px
+    style FREEE_SVC fill:#96CEB4,stroke:#333,stroke-width:2px
 ```
 
-### インフラストラクチャ層の詳細構成
+### インフラストラクチャ層の詳細構成（v2.0 40カラム新機能対応）
 
 ```mermaid
 graph TD
-    subgraph "🗄️ データ層"
-        DB_MGR[DatabaseManager<br/>データベース管理]
-        SUPABASE[(Supabase<br/>PostgreSQL)]
+    subgraph "🗄️ データ層（40カラム完全対応）"
+        DB_MGR[DatabaseManager<br/>データベース管理<br/>40カラム対応]
+        SUPABASE[(Supabase<br/>PostgreSQL<br/>レプリケーション方式)]
     end
     
-    subgraph "🤖 AI処理層"
-        GEMINI_MGR[GeminiAPIManager<br/>AI処理管理]
-        GEMINI_API[Google Gemini API]
+    subgraph "🤖 AI処理層（新機能プロンプト対応）"
+        GEMINI_MGR[GeminiAPIManager<br/>AI処理管理<br/>新機能プロンプト5種]
+        GEMINI_API[Google Gemini API<br/>40カラム対応]
+        PROMPT_CACHE[プロンプトキャッシュ<br/>新機能プロンプト管理]
     end
     
-    subgraph "☁️ ストレージ層"
-        DRIVE_MGR[GoogleDriveManager<br/>ファイル管理]
+    subgraph "☁️ ストレージ層（マルチソース対応）"
+        DRIVE_MGR[GoogleDriveManager<br/>ファイル管理<br/>統合処理]
         GDRIVE_API[Google Drive API]
+        GMAIL_MGR[GmailManager<br/>Gmail API連携 ★v2.0 NEW★]
+        GMAIL_API[Gmail API ★v2.0 NEW★]
     end
     
-    subgraph "🎨 UI拡張層"
-        AGGRID_MGR[AgGridManager<br/>グリッド管理]
-        AGGRID_LIB[ag-Grid Library]
-        VALIDATION_UI[ValidationDisplay<br/>検証結果表示]
+    subgraph "💱 外部API層（v2.0 NEW）"
+        EXCHANGE_MGR[ExchangeRateManager<br/>為替レート管理]
+        EXCHANGE_API[Exchange Rate API]
+        FREEE_MGR[FreeeManager<br/>freee API連携]
+        FREEE_API[freee API]
+        NOTIFICATION_MGR[NotificationManager<br/>通知API管理]
+        NOTIFICATION_API[Slack/Teams/Email API]
     end
     
+    subgraph "🎨 UI拡張層（40カラム新機能対応）"
+        AGGRID_MGR[AgGridManager<br/>グリッド管理<br/>新機能タブ対応]
+        AGGRID_LIB[ag-Grid Library<br/>40カラム表示]
+        VALIDATION_UI[ValidationDisplay<br/>検証結果表示<br/>新機能検証対応]
+        MULTI_UI[MultiSourceDisplay<br/>マルチソース表示 ★v2.0 NEW★]
+        CURRENCY_UI_MGR[CurrencyDisplayManager<br/>外貨表示管理 ★v2.0 NEW★]
+        APPROVAL_UI_MGR[ApprovalUIManager<br/>承認UI管理 ★v2.0 NEW★]
+        FREEE_UI_MGR[FreeeUIManager<br/>freee UI管理 ★v2.0 NEW★]
+    end
+    
+    %% 基本接続
     DB_MGR --> SUPABASE
     GEMINI_MGR --> GEMINI_API
+    GEMINI_MGR --> PROMPT_CACHE
     DRIVE_MGR --> GDRIVE_API
     AGGRID_MGR --> AGGRID_LIB
     
+    %% v2.0新機能接続
+    GMAIL_MGR --> GMAIL_API
+    EXCHANGE_MGR --> EXCHANGE_API
+    FREEE_MGR --> FREEE_API
+    NOTIFICATION_MGR --> NOTIFICATION_API
+    
+    %% UI拡張接続
+    AGGRID_MGR --> MULTI_UI
+    AGGRID_MGR --> CURRENCY_UI_MGR
+    AGGRID_MGR --> APPROVAL_UI_MGR
+    AGGRID_MGR --> FREEE_UI_MGR
+    
+    %% データ連携
+    GMAIL_MGR --> DB_MGR
+    EXCHANGE_MGR --> DB_MGR
+    FREEE_MGR --> DB_MGR
+    
+    %% スタイリング
     style SUPABASE fill:#FFB6C1
     style GEMINI_API fill:#DDA0DD
     style GDRIVE_API fill:#F0E68C
     style AGGRID_LIB fill:#98FB98
+    style GMAIL_API fill:#FF6B6B
+    style EXCHANGE_API fill:#4ECDC4
+    style FREEE_API fill:#96CEB4
+    style NOTIFICATION_API fill:#45B7D1
 ```
 
 ## 🔄 データフロー図
@@ -381,25 +543,3 @@ timeline
              : MLOps パイプライン
              : リアルタイム処理
 ```
-
----
-
-**最終更新**: 2025年7月27日  
-**承認者**: システムアーキテクト  
-**レビュー予定**: 2025年8月27日  
-**v1.2変更**: 統一スキーマ完全再構築対応
-
-**関連ドキュメント**:
-
-### 📚 統合設計書
-- [15_システムアーキテクチャ設計書.md](15_システムアーキテクチャ設計書.md) - システム全体設計（統合版）
-- [16_データベース設計書.md](16_データベース設計書.md) - データベース設計（統合版）
-
-### 🏗️ 詳細設計書（独立版）
-- [18_データベースER図.md](18_データベースER図.md) - データベースER図・関係性
-- [19_テーブル設計詳細仕様書.md](19_テーブル設計詳細仕様書.md) - テーブル仕様・制約・インデックス
-- [20_シーケンス図集.md](20_シーケンス図集.md) - 処理フロー・正常系・異常系
-- [21_クラス図.md](21_クラス図.md) - クラス構造・コンポーネント関係
-
-### 📋 ドキュメント管理
-- [00_DOCS_INDEX.md](00_DOCS_INDEX.md) - 全ドキュメント一覧・関連性 

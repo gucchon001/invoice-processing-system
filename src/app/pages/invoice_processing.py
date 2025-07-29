@@ -581,8 +581,8 @@ def render_basic_ocr_results(results, include_validation):
 
 
 def render_enhanced_result_tabs(result: Dict[str, Any], filename: str):
-    """拡張プレビュー機能付き結果表示（タブ分割）"""
-    tab1, tab2, tab3, tab4 = st.tabs(["📋 基本情報", "📊 明細", "🔍 JSON", "📄 PDF"])
+    """拡張プレビュー機能付き結果表示（タブ分割・40カラム新機能対応）"""
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 基本情報", "📊 明細", "🆕 新機能", "🔍 JSON", "📄 PDF"])
     
     extracted_data = result.get('extracted_data', {})
     
@@ -595,16 +595,20 @@ def render_enhanced_result_tabs(result: Dict[str, Any], filename: str):
         render_line_items_enhanced(extracted_data)
     
     with tab3:
+        # 🆕 40カラム新機能情報表示 ★v3.0 NEW★
+        render_new_features_enhanced(extracted_data, result)
+    
+    with tab4:
         # JSON詳細表示
         render_json_preview_enhanced(result, extracted_data)
     
-    with tab4:
+    with tab5:
         # PDF プレビュー
         render_pdf_preview_enhanced(result, filename)
 
 
 def render_basic_info_enhanced(extracted_data: Dict[str, Any]):
-    """拡張基本情報表示"""
+    """拡張基本情報表示（40カラム基本情報含む）"""
     col1, col2 = st.columns(2)
     
     with col1:
@@ -614,18 +618,35 @@ def render_basic_info_enhanced(extracted_data: Dict[str, Any]):
         st.write(f"• 請求書番号: {extracted_data.get('main_invoice_number', 'N/A')}")
         st.write(f"• 受領書番号: {extracted_data.get('receipt_number', 'N/A')}")
         st.write(f"• T番号: {extracted_data.get('t_number', 'N/A')}")
+        
+        # 🆕 ファイルソース情報 ★v3.0 NEW★
+        source_type = extracted_data.get('source_type', 'local')
+        st.write(f"• ファイルソース: {source_type}")
+        if source_type == 'gmail':
+            gmail_id = extracted_data.get('gmail_message_id', 'N/A')
+            sender = extracted_data.get('sender_email', 'N/A')
+            st.write(f"  - Gmail ID: {gmail_id}")
+            st.write(f"  - 送信者: {sender}")
     
     with col2:
         st.markdown("**💰 金額情報**")
         amount_inc = extracted_data.get('amount_inclusive_tax', 0)
         amount_exc = extracted_data.get('amount_exclusive_tax', 0)
         tax_amount = extracted_data.get('tax_amount', 0)
+        currency = extracted_data.get('currency', 'JPY')
         
-        st.write(f"• 税込金額: ¥{amount_inc:,}" if amount_inc else "• 税込金額: N/A")
-        st.write(f"• 税抜金額: ¥{amount_exc:,}" if amount_exc else "• 税抜金額: N/A")
-        st.write(f"• 消費税額: ¥{tax_amount:,}" if tax_amount else "• 消費税額: N/A")
-        st.write(f"• 通貨: {extracted_data.get('currency', 'JPY')}")
+        st.write(f"• 税込金額: {currency} {amount_inc:,}" if amount_inc else "• 税込金額: N/A")
+        st.write(f"• 税抜金額: {currency} {amount_exc:,}" if amount_exc else "• 税抜金額: N/A")
+        st.write(f"• 消費税額: {currency} {tax_amount:,}" if tax_amount else "• 消費税額: N/A")
+        st.write(f"• 通貨: {currency}")
         st.write(f"• 請求日: {extracted_data.get('issue_date', 'N/A')}")
+        
+        # 🆕 外貨換算情報簡易表示 ★v3.0 NEW★
+        if currency != 'JPY' and extracted_data.get('jpy_amount'):
+            exchange_rate = extracted_data.get('exchange_rate', 0)
+            jpy_amount = extracted_data.get('jpy_amount', 0)
+            st.write(f"• 📱 JPY換算: ¥{jpy_amount:,.0f}")
+            st.write(f"• 📱 為替レート: {exchange_rate}")
     
     # キー情報の表示
     key_info = extracted_data.get('key_info', {})
@@ -638,6 +659,138 @@ def render_basic_info_enhanced(extracted_data: Dict[str, Any]):
                     st.write(f"  - {key}: {value}")
         else:
             st.write("• キー情報: なし")
+
+
+def render_new_features_enhanced(extracted_data: Dict[str, Any], result: Dict[str, Any]):
+    """40カラム新機能情報表示（専用タブ）★v3.0 NEW★"""
+    st.markdown("### 🆕 40カラム新機能情報")
+    st.caption("外貨換算・承認ワークフロー・freee連携の詳細情報")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # 💱 外貨換算情報
+        st.markdown("**💱 外貨換算情報**")
+        currency = extracted_data.get('currency', 'JPY')
+        if currency != 'JPY':
+            exchange_rate = extracted_data.get('exchange_rate')
+            jpy_amount = extracted_data.get('jpy_amount')
+            conversion_status = extracted_data.get('currency_conversion_status', 'unknown')
+            conversion_timestamp = extracted_data.get('conversion_timestamp', 'N/A')
+            rate_source = extracted_data.get('rate_source', 'N/A')
+            
+            if exchange_rate and jpy_amount:
+                st.success(f"✅ 外貨換算完了")
+                st.write(f"• 為替レート: 1 {currency} = {exchange_rate:.2f} JPY")
+                st.write(f"• JPY換算金額: ¥{jpy_amount:,.0f}")
+                st.write(f"• 換算日時: {conversion_timestamp}")
+                st.write(f"• レート取得元: {rate_source}")
+            else:
+                st.warning(f"⚠️ 外貨換算失敗: {conversion_status}")
+        else:
+            st.info("💴 JPY請求書（換算不要）")
+        
+        # 📊 freee連携情報
+        st.markdown("**📊 freee連携情報**")
+        freee_ready = extracted_data.get('freee_ready', False)
+        freee_status = extracted_data.get('freee_preparation_status', 'unknown')
+        
+        if freee_ready:
+            freee_batch_id = extracted_data.get('freee_batch_id', 'N/A')
+            freee_account = extracted_data.get('freee_account_mapping', {})
+            freee_category = extracted_data.get('freee_category', 'N/A')
+            exported = extracted_data.get('exported_to_freee', False)
+            
+            if exported:
+                st.success("✅ freee連携完了")
+                export_date = extracted_data.get('export_date', 'N/A')
+                st.write(f"• 連携日時: {export_date}")
+            else:
+                st.info("📋 freee連携準備完了")
+            
+            st.write(f"• バッチID: {freee_batch_id}")
+            st.write(f"• 経費カテゴリ: {freee_category}")
+            if freee_account:
+                st.write(f"• 勘定科目: {freee_account.get('name', 'N/A')} ({freee_account.get('code', 'N/A')})")
+        else:
+            status_messages = {
+                'pending_approval': '📋 承認待ちのため連携保留',
+                'error': '❌ freee連携準備エラー',
+                'unknown': '❓ freee連携状況不明'
+            }
+            st.warning(status_messages.get(freee_status, f"⚠️ freee連携未完了: {freee_status}"))
+    
+    with col2:
+        # ✅ 承認ワークフロー情報
+        st.markdown("**✅ 承認ワークフロー情報**")
+        approval_status = extracted_data.get('approval_status', 'unknown')
+        
+        if approval_status == 'auto_approved':
+            st.success("🟢 自動承認済み")
+            approved_by = extracted_data.get('approved_by', 'system')
+            approved_at = extracted_data.get('approved_at', 'N/A')
+            approval_reason = extracted_data.get('approval_reason', 'N/A')
+            
+            st.write(f"• 承認者: {approved_by}")
+            st.write(f"• 承認日時: {approved_at}")
+            st.write(f"• 承認理由: {approval_reason}")
+            
+        elif approval_status == 'approved':
+            st.success("✅ 承認済み")
+            approved_by = extracted_data.get('approved_by', 'N/A')
+            approved_at = extracted_data.get('approved_at', 'N/A')
+            
+            st.write(f"• 承認者: {approved_by}")
+            st.write(f"• 承認日時: {approved_at}")
+            
+        elif approval_status == 'pending':
+            st.warning("📋 承認待ち")
+            approval_level = extracted_data.get('approval_level', 'N/A')
+            current_approver = extracted_data.get('current_approver', 'N/A')
+            approval_reason = extracted_data.get('approval_reason', 'N/A')
+            
+            st.write(f"• 承認レベル: {approval_level}")
+            st.write(f"• 承認者: {current_approver}")
+            st.write(f"• 承認理由: {approval_reason}")
+            
+        elif approval_status == 'rejected':
+            st.error("❌ 承認拒否")
+            rejection_reason = extracted_data.get('rejection_reason', 'N/A')
+            st.write(f"• 拒否理由: {rejection_reason}")
+            
+        else:
+            st.info(f"❓ 承認状況: {approval_status}")
+        
+        # 💳 カード明細連携情報
+        st.markdown("**💳 カード明細連携情報**")
+        card_statement_id = extracted_data.get('card_statement_id')
+        if card_statement_id:
+            st.info(f"📋 カード明細ID: {card_statement_id}")
+        else:
+            st.write("• カード明細連携なし")
+    
+    # 🔄 ワークフロー処理履歴
+    progress_history = result.get('progress_history', [])
+    if progress_history:
+        st.markdown("**🔄 処理履歴**")
+        with st.expander("詳細履歴を表示", expanded=False):
+            for i, progress in enumerate(progress_history, 1):
+                status = progress.get('status', 'unknown')
+                step = progress.get('step', 'N/A')
+                message = progress.get('message', 'N/A')
+                timestamp = progress.get('timestamp', 'N/A')
+                
+                # ステータスに応じたアイコン
+                status_icon = {
+                    'uploading': '📤',
+                    'processing': '🔄', 
+                    'saving': '💾',
+                    'completed': '✅',
+                    'failed': '❌'
+                }.get(status, '❓')
+                
+                st.write(f"{i}. {status_icon} {step}: {message}")
+                st.caption(f"   ⏰ {timestamp}") 
 
 
 def render_line_items_enhanced(extracted_data: Dict[str, Any]):

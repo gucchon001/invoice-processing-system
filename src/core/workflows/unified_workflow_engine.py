@@ -3,6 +3,7 @@
 
 全ての請求書処理ワークフローを統一管理するエンジンクラス
 重複コードの統合とメンテナンス性の向上を目的とする
+40カラム新機能対応: 外貨換算・承認ワークフロー・freee連携統合
 """
 
 import logging
@@ -13,6 +14,9 @@ import uuid
 
 from core.models.workflow_models import WorkflowStatus, WorkflowProgress, WorkflowResult
 from core.services.unified_prompt_manager import UnifiedPromptManager, PromptSelector
+from core.services.currency_conversion_service import CurrencyConversionService  # 🆕 v3.0 NEW
+from core.services.approval_control_service import ApprovalControlService        # 🆕 v3.0 NEW
+from core.services.freee_integration_service import FreeeIntegrationService      # 🆕 v3.0 NEW
 from infrastructure.ai.gemini_helper import GeminiAPIManager
 from infrastructure.storage.google_drive_helper import GoogleDriveManager
 from infrastructure.database.database import DatabaseManager
@@ -21,7 +25,7 @@ from utils.log_config import get_logger
 logger = get_logger(__name__)
 
 class UnifiedWorkflowEngine:
-    """統一ワークフローエンジン"""
+    """統一ワークフローエンジン（40カラム新機能対応）"""
     
     def __init__(self, 
                  ai_service: GeminiAPIManager,
@@ -44,9 +48,14 @@ class UnifiedWorkflowEngine:
         self.prompt_manager = UnifiedPromptManager()
         self.prompt_selector = PromptSelector(self.prompt_manager)
         
+        # 🆕 40カラム新機能サービス初期化 ★v3.0 NEW★
+        self.currency_service = CurrencyConversionService()      # 外貨換算サービス
+        self.approval_service = ApprovalControlService()         # 承認ワークフローサービス  
+        self.freee_service = FreeeIntegrationService()           # freee連携サービス
+        
         # 処理履歴管理
         self.progress_history = []
-        logger.info("UnifiedWorkflowEngine initialized.")
+        logger.info("UnifiedWorkflowEngine initialized with 40-column features.")
 
     def _notify_progress(self, status: WorkflowStatus, step: str, 
                         progress_percent: int, message: str, 
@@ -99,9 +108,18 @@ class UnifiedWorkflowEngine:
             # Step 2.5: 統一データ検証・正規化処理
             validated_data = self._unified_data_validation(extracted_data, filename)
             
-            # Step 3: 統一データベース保存処理
+            # 🆕 Step 2.6: 外貨換算処理 ★v3.0 NEW★
+            currency_data = self._unified_currency_conversion(validated_data, filename)
+            
+            # 🆕 Step 2.7: 承認ワークフロー処理 ★v3.0 NEW★
+            approval_data = self._unified_approval_workflow(currency_data, filename)
+            
+            # 🆕 Step 2.8: freee連携準備 ★v3.0 NEW★
+            integration_data = self._unified_freee_preparation(approval_data, filename)
+            
+            # Step 3: 統一データベース保存処理（40カラム完全対応）
             invoice_id = self._unified_database_save(
-                file_info, validated_data, filename, user_id, mode
+                file_info, integration_data, filename, user_id, mode
             )
             
             # Step 4: 完了処理
@@ -366,17 +384,28 @@ class UnifiedWorkflowEngine:
             
             # 統一データレコード準備
             invoice_record = {
+                # 🔑 RLS対応: user_emailを明示的に設定 ★RLS FIX★
+                "user_email": user_id,  # user_idは認証済みユーザーのメールアドレス
+                "created_by": user_id,  # 後方互換性のため保持
+                
+                # ファイル・データ情報
                 "file_id": file_info.get("file_id", ""),  # file_pathからfile_idに修正
                 "file_name": filename,
                 "extracted_data": extracted_data,
-                "created_by": user_id,
                 "status": "extracted",
                 "processing_mode": mode,
+                
+                # 抽出済み基本情報
                 "issuer_name": extracted_data.get("issuer"),
                 "total_amount_tax_included": extracted_data.get("amount_inclusive_tax"),
                 "issue_date": extracted_data.get("issue_date"),
                 "main_invoice_number": extracted_data.get("main_invoice_number")  # 統一化フィールド復活
             }
+            
+            # 🔍 RLSデバッグログ追加 ★DEBUG★
+            logger.info(f"🔍 RLS Debug - user_email設定: {user_id}")
+            logger.info(f"🔍 RLS Debug - invoice_record keys: {list(invoice_record.keys())}")
+            logger.info(f"🔍 RLS Debug - file_name: {filename}")
             
             # データベースに保存
             save_result = self.database_service.insert_invoice(invoice_record)
@@ -600,3 +629,217 @@ class UnifiedWorkflowEngine:
             logger.error(f"OCRテスト準備フェーズでエラーが発生: {e}", exc_info=True)
             self._notify_progress(WorkflowStatus.FAILED, "OCR_TEST_PREPARATION", 0, f"OCRテスト準備エラー: {e}")
             return {"error": f"An error occurred during OCR test preparation: {e}"} 
+    
+    # ============================================================
+    # 🆕 40カラム新機能処理メソッド ★v3.0 NEW★
+    # ============================================================
+    
+    def _unified_currency_conversion(self, validated_data: Dict[str, Any], filename: str) -> Dict[str, Any]:
+        """統一外貨換算処理（40カラム新機能）
+        
+        Args:
+            validated_data: 検証済みデータ
+            filename: ファイル名
+            
+        Returns:
+            Dict: 外貨換算データ追加済みデータ
+        """
+        try:
+            self._notify_progress(
+                WorkflowStatus.PROCESSING,
+                "外貨換算処理",
+                75,
+                "外貨換算処理中..."
+            )
+            
+            logger.info(f"💱 外貨換算処理開始: {filename}")
+            
+            # 通貨情報取得
+            currency = validated_data.get('currency', 'JPY')
+            amount = validated_data.get('amount_inclusive_tax', 0)
+            
+            # JPYの場合は換算不要
+            if currency.upper() == 'JPY':
+                logger.info(f"💱 JPY請求書のため換算不要: {filename}")
+                validated_data.update({
+                    'exchange_rate': 1.0,
+                    'jpy_amount': amount,
+                    'currency_conversion_status': 'no_conversion_needed'
+                })
+                return validated_data
+            
+            # 外貨換算実行
+            if amount and amount > 0:
+                conversion_result = self.currency_service.convert_to_jpy(amount, currency)
+                
+                validated_data.update({
+                    'exchange_rate': conversion_result['exchange_rate'],
+                    'jpy_amount': conversion_result['jpy_amount'],
+                    'currency_conversion_status': 'converted',
+                    'conversion_timestamp': conversion_result['conversion_timestamp'],
+                    'rate_source': conversion_result['source']
+                })
+                
+                logger.info(f"✅ 外貨換算完了: {amount} {currency} → ¥{conversion_result['jpy_amount']:,.2f}")
+            else:
+                logger.warning(f"⚠️ 金額不明のため外貨換算スキップ: {filename}")
+                validated_data.update({
+                    'currency_conversion_status': 'skipped_no_amount'
+                })
+            
+            return validated_data
+            
+        except Exception as e:
+            logger.error(f"❌ 外貨換算処理エラー: {e}")
+            # エラー時でも処理を継続（換算なしで）
+            validated_data.update({
+                'currency_conversion_status': 'error',
+                'currency_conversion_error': str(e)
+            })
+            return validated_data
+    
+    def _unified_approval_workflow(self, currency_data: Dict[str, Any], filename: str) -> Dict[str, Any]:
+        """統一承認ワークフロー処理（40カラム新機能）
+        
+        Args:
+            currency_data: 外貨換算済みデータ
+            filename: ファイル名
+            
+        Returns:
+            Dict: 承認ワークフローデータ追加済みデータ
+        """
+        try:
+            self._notify_progress(
+                WorkflowStatus.PROCESSING,
+                "承認ワークフロー処理",
+                80,
+                "承認要否判定中..."
+            )
+            
+            logger.info(f"✅ 承認ワークフロー処理開始: {filename}")
+            
+            # 承認要否評価
+            approval_evaluation = self.approval_service.evaluate_approval_requirement(currency_data)
+            
+            if approval_evaluation['requires_approval']:
+                # 承認必要な場合
+                approval_level = approval_evaluation['approval_level']
+                approver_email = self.approval_service.assign_approver(approval_level)
+                
+                currency_data.update({
+                    'approval_status': 'pending',
+                    'approval_level': approval_level,
+                    'current_approver': approver_email,
+                    'approval_reason': approval_evaluation['reason'],
+                    'approval_evaluation': approval_evaluation
+                })
+                
+                logger.info(f"📋 承認必要: レベル={approval_level}, 承認者={approver_email}")
+                
+                # 承認通知送信（実際の実装では承認者情報を取得）
+                # self.approval_service.send_approval_notification(...)
+                
+            else:
+                # 自動承認可能な場合
+                currency_data.update({
+                    'approval_status': 'auto_approved',
+                    'approved_by': 'system',
+                    'approved_at': datetime.now().isoformat(),
+                    'approval_reason': '自動承認基準を満たす'
+                })
+                
+                logger.info(f"🟢 自動承認: {filename}")
+            
+            return currency_data
+            
+        except Exception as e:
+            logger.error(f"❌ 承認ワークフロー処理エラー: {e}")
+            # エラー時はpendingステータスで保存
+            currency_data.update({
+                'approval_status': 'pending',
+                'approval_error': str(e)
+            })
+            return currency_data
+    
+    def _unified_freee_preparation(self, approval_data: Dict[str, Any], filename: str) -> Dict[str, Any]:
+        """統一freee連携準備処理（40カラム新機能）
+        
+        Args:
+            approval_data: 承認ワークフロー済みデータ
+            filename: ファイル名
+            
+        Returns:
+            Dict: freee連携準備済みデータ
+        """
+        try:
+            self._notify_progress(
+                WorkflowStatus.PROCESSING,
+                "freee連携準備",
+                85,
+                "freee連携データ準備中..."
+            )
+            
+            logger.info(f"📊 freee連携準備開始: {filename}")
+            
+            # 承認済みの場合のみfreee連携準備
+            approval_status = approval_data.get('approval_status', 'pending')
+            
+            if approval_status in ['approved', 'auto_approved']:
+                # 承認済み：freee連携準備実行
+                try:
+                    # freee連携データ準備（実際の連携は別途実行）
+                    category = self._detect_expense_category(approval_data)
+                    account_mapping = self.freee_service.map_expense_category(category)
+                    batch_id = self.freee_service.generate_batch_id()
+                    
+                    approval_data.update({
+                        'freee_ready': True,
+                        'freee_batch_id': batch_id,
+                        'freee_account_mapping': account_mapping,
+                        'freee_category': category,
+                        'exported_to_freee': False,  # 実際の連携はまだ
+                        'freee_preparation_status': 'ready'
+                    })
+                    
+                    logger.info(f"✅ freee連携準備完了: バッチID={batch_id}, 勘定科目={account_mapping['name']}")
+                    
+                except Exception as freee_error:
+                    logger.warning(f"⚠️ freee連携準備でエラー（処理は継続）: {freee_error}")
+                    approval_data.update({
+                        'freee_ready': False,
+                        'freee_preparation_status': 'error',
+                        'freee_preparation_error': str(freee_error)
+                    })
+            else:
+                # 未承認：freee連携は保留
+                approval_data.update({
+                    'freee_ready': False,
+                    'freee_preparation_status': 'pending_approval',
+                    'exported_to_freee': False
+                })
+                
+                logger.info(f"📋 未承認のためfreee連携は保留: {filename}")
+            
+            return approval_data
+            
+        except Exception as e:
+            logger.error(f"❌ freee連携準備エラー: {e}")
+            # エラー時でも処理を継続
+            approval_data.update({
+                'freee_ready': False,
+                'freee_preparation_status': 'error',
+                'freee_preparation_error': str(e)
+            })
+            return approval_data
+    
+    def _detect_expense_category(self, invoice_data: Dict[str, Any]) -> str:
+        """経費カテゴリ推定（内部ヘルパー）
+        
+        Args:
+            invoice_data: 請求書データ
+            
+        Returns:
+            str: 推定カテゴリ
+        """
+        # FreeeIntegrationService の _detect_expense_category を活用
+        return self.freee_service._detect_expense_category(invoice_data) 
