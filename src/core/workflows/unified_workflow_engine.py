@@ -48,14 +48,31 @@ class UnifiedWorkflowEngine:
         self.prompt_manager = UnifiedPromptManager()
         self.prompt_selector = PromptSelector(self.prompt_manager)
         
-        # 🆕 40カラム新機能サービス初期化 ★v3.0 NEW★
-        self.currency_service = CurrencyConversionService()      # 外貨換算サービス
-        self.approval_service = ApprovalControlService()         # 承認ワークフローサービス  
-        self.freee_service = FreeeIntegrationService()           # freee連携サービス
+        # 🆕 40カラム新機能サービス初期化 ★v3.0 NEW★ - エラーハンドリング強化
+        try:
+            self.currency_service = CurrencyConversionService()      # 外貨換算サービス
+            logger.info("✅ CurrencyConversionService 初期化完了")
+        except Exception as e:
+            logger.warning(f"⚠️ CurrencyConversionService 初期化エラー（機能制限）: {e}")
+            self.currency_service = None
+            
+        try:
+            self.approval_service = ApprovalControlService()         # 承認ワークフローサービス  
+            logger.info("✅ ApprovalControlService 初期化完了")
+        except Exception as e:
+            logger.warning(f"⚠️ ApprovalControlService 初期化エラー（機能制限）: {e}")
+            self.approval_service = None
+            
+        try:
+            self.freee_service = FreeeIntegrationService()           # freee連携サービス
+            logger.info("✅ FreeeIntegrationService 初期化完了")
+        except Exception as e:
+            logger.warning(f"⚠️ FreeeIntegrationService 初期化エラー（機能制限）: {e}")
+            self.freee_service = None
         
         # 処理履歴管理
         self.progress_history = []
-        logger.info("UnifiedWorkflowEngine initialized with 40-column features.")
+        logger.info("UnifiedWorkflowEngine initialized with 40-column features (with error handling).")
 
     def _notify_progress(self, status: WorkflowStatus, step: str, 
                         progress_percent: int, message: str, 
@@ -371,7 +388,7 @@ class UnifiedWorkflowEngine:
                               filename: str, 
                               user_id: str,
                               mode: str) -> str:
-        """統一データベース保存処理"""
+        """統一データベース保存処理（モード別テーブル対応）"""
         self._notify_progress(
             WorkflowStatus.SAVING,
             "データベース保存",
@@ -382,52 +399,272 @@ class UnifiedWorkflowEngine:
         try:
             logger.info(f"💾 統一DB保存開始: {filename} (モード: {mode})")
             
-            # 統一データレコード準備
-            invoice_record = {
-                # 🔑 RLS対応: user_emailを明示的に設定 ★RLS FIX★
-                "user_email": user_id,  # user_idは認証済みユーザーのメールアドレス
-                "created_by": user_id,  # 後方互換性のため保持
-                
-                # ファイル・データ情報
-                "file_id": file_info.get("file_id", ""),  # file_pathからfile_idに修正
-                "file_name": filename,
-                "extracted_data": extracted_data,
-                "status": "extracted",
-                "processing_mode": mode,
-                
-                # 抽出済み基本情報
-                "issuer_name": extracted_data.get("issuer"),
-                "total_amount_tax_included": extracted_data.get("amount_inclusive_tax"),
-                "issue_date": extracted_data.get("issue_date"),
-                "main_invoice_number": extracted_data.get("main_invoice_number")  # 統一化フィールド復活
-            }
-            
-            # 🔍 RLSデバッグログ追加 ★DEBUG★
-            logger.info(f"🔍 RLS Debug - user_email設定: {user_id}")
-            logger.info(f"🔍 RLS Debug - invoice_record keys: {list(invoice_record.keys())}")
-            logger.info(f"🔍 RLS Debug - file_name: {filename}")
-            
-            # データベースに保存
-            save_result = self.database_service.insert_invoice(invoice_record)
-            
-            if not save_result:
-                raise Exception("データベース保存に失敗しました")
-            
-            invoice_id = save_result.get('id')
-            logger.info(f"💾 統一DB保存完了: ID={invoice_id}")
-            
-            self._notify_progress(
-                WorkflowStatus.SAVING,
-                "データベース保存",
-                90,
-                f"データベース保存完了 (ID: {invoice_id})"
-            )
-            
-            return str(invoice_id)
+            # 🎯 モード別保存処理
+            if mode in ["ocr_test", "test"]:
+                # OCRテスト用データベース保存
+                return self._save_to_test_table(file_info, extracted_data, filename, user_id, mode)
+            else:
+                # 本番用データベース保存
+                return self._save_to_production_table(file_info, extracted_data, filename, user_id, mode)
             
         except Exception as e:
             logger.error(f"❌ 統一DB保存エラー: {e}")
-            raise Exception(f"統一データベース保存に失敗しました: {e}")
+            raise
+    
+    def _save_to_production_table(self, file_info: Dict[str, Any], extracted_data: Dict[str, Any], 
+                                 filename: str, user_id: str, mode: str) -> str:
+        """本番テーブル（invoices）への保存"""
+        logger.info(f"📋 本番テーブル保存: {filename}")
+        
+        # 🎯 本番用データレコード完全準備（40カラム対応）
+        from datetime import timezone, timedelta
+        jst = timezone(timedelta(hours=9))
+        jst_now = datetime.now(jst).isoformat()
+        
+        invoice_record = {
+            # 🔑 基本管理
+            "user_email": user_id,  # RLS対応
+            "status": "extracted",
+            "uploaded_at": jst_now,
+            "created_at": jst_now,
+            "updated_at": jst_now,
+            
+            # 📁 ファイル管理
+            "file_name": filename,
+            "gdrive_file_id": file_info.get("file_id"),  # Google Drive ID  
+            "file_path": file_info.get("file_path"),     # ファイルパス
+            "source_type": self._determine_source_type(mode, file_info),  # local/gdrive/gmail
+            "gmail_message_id": None,  # Gmail連携時に設定
+            "attachment_id": None,     # Gmail連携時に設定
+            "sender_email": None,      # Gmail連携時に設定
+            
+            # 📄 請求書基本情報
+            "issuer_name": extracted_data.get("issuer"),
+            "recipient_name": extracted_data.get("payer"),
+            "main_invoice_number": extracted_data.get("main_invoice_number"),
+            "receipt_number": extracted_data.get("receipt_number"),
+            "t_number": extracted_data.get("t_number"),
+            "issue_date": extracted_data.get("issue_date"),
+            "due_date": extracted_data.get("due_date"),
+            
+            # 💰 金額・通貨情報
+            "currency": extracted_data.get("currency"),
+            "total_amount_tax_included": extracted_data.get("amount_inclusive_tax"),
+            "total_amount_tax_excluded": extracted_data.get("amount_exclusive_tax"),
+            "exchange_rate": extracted_data.get("exchange_rate"),
+            "jpy_amount": extracted_data.get("jpy_amount"),
+            "card_statement_id": None,  # カード明細連携時に設定
+            
+            # 🤖 AI処理・検証結果
+            "extracted_data": extracted_data,
+            "raw_response": None,  # 生のAIレスポンス（オプション）
+            "key_info": extracted_data.get("key_info"),  # ★ 重要：key_info設定 ★
+            "is_valid": True,  # 基本的にはTrue
+            "validation_errors": None,  # エラー配列
+            "validation_warnings": None,  # 警告配列
+            "completeness_score": None,  # 完全性スコア
+            "processing_time": None,  # 処理時間
+            
+            # ✅ 承認ワークフロー（本番専用）
+            "approval_status": extracted_data.get("approval_status", "pending"),
+            "approved_by": extracted_data.get("approved_by"),
+            "approved_at": extracted_data.get("approved_at"),
+            
+            # 📊 freee連携（本番専用）
+            "exported_to_freee": extracted_data.get("exported_to_freee", False),
+            "export_date": None,  # freee実際エクスポート時に設定
+            "freee_batch_id": extracted_data.get("freee_batch_id")
+        }
+        
+        # 🔍 RLSデバッグログ追加 ★DEBUG★
+        logger.info(f"🔍 本番DB Debug - user_email設定: {user_id}")
+        logger.info(f"🔍 本番DB Debug - invoice_record keys: {list(invoice_record.keys())}")
+        logger.info(f"🔍 本番DB Debug - file_name: {filename}")
+        
+        # 本番データベースに保存
+        save_result = self.database_service.insert_invoice(invoice_record)
+        
+        if not save_result:
+            raise Exception("本番データベース保存に失敗しました")
+        
+        invoice_id = save_result.get('id')
+        logger.info(f"💾 本番DB保存完了: ID={invoice_id}")
+        
+        self._notify_progress(
+            WorkflowStatus.SAVING,
+            "本番データベース保存",
+            90,
+            f"本番データベース保存完了 (ID: {invoice_id})"
+        )
+        
+        return str(invoice_id)
+    
+    def _save_to_test_table(self, file_info: Dict[str, Any], extracted_data: Dict[str, Any], 
+                           filename: str, user_id: str, mode: str) -> str:
+        """テスト用テーブル（ocr_test_results）への保存"""
+        logger.info(f"🧪 テストテーブル保存: {filename}")
+        
+        # 🎯 テスト用データレコード完全準備（40カラム対応）
+        from datetime import timezone, timedelta
+        jst = timezone(timedelta(hours=9))
+        jst_now = datetime.now(jst).isoformat()
+        
+        test_record = {
+            # 🔑 基本識別情報
+            "user_email": user_id,
+            "status": "extracted",
+            "uploaded_at": jst_now,
+            "created_at": jst_now,
+            "updated_at": jst_now,
+            
+            # 📁 ファイル・データ情報
+            "file_name": filename,
+            "gdrive_file_id": file_info.get("file_id"),  # Google Drive ID
+            "file_path": file_info.get("file_path"),     # ファイルパス
+            "source_type": "gdrive",  # OCRテストはGoogle Drive固定
+            
+            # 📄 請求書基本情報（完全マッピング）
+            "issuer_name": extracted_data.get("issuer"),
+            "recipient_name": extracted_data.get("payer"),  # 支払者（受取人）
+            "main_invoice_number": extracted_data.get("main_invoice_number"),
+            "receipt_number": extracted_data.get("receipt_number"),  # 領収書番号
+            "t_number": extracted_data.get("t_number"),  # 適格請求書発行事業者登録番号
+            "issue_date": extracted_data.get("issue_date"),
+            "due_date": extracted_data.get("due_date"),  # 支払期日
+            
+            # 💰 金額・通貨情報（完全マッピング）
+            "currency": extracted_data.get("currency"),  # 通貨情報
+            "total_amount_tax_included": extracted_data.get("amount_inclusive_tax"),
+            "total_amount_tax_excluded": extracted_data.get("amount_exclusive_tax"),  # 税抜金額
+            "exchange_rate": extracted_data.get("exchange_rate"),
+            "jpy_amount": extracted_data.get("jpy_amount"),
+            
+            # 🤖 AI処理・検証結果（完全マッピング）
+            "extracted_data": extracted_data,
+            "raw_response": None,  # テスト用では未使用
+            "key_info": extracted_data.get("key_info"),  # ★ 重要：key_info設定 ★
+            "is_valid": True,  # 基本的にはTrue
+            "validation_errors": None,  # エラー配列
+            "validation_warnings": None,  # 警告配列
+            "completeness_score": None,  # 完全性スコア
+            "processing_time": None,  # 処理時間（秒）
+            
+            # 🧪 テスト固有フィールド
+            "gemini_model": "gemini-2.5-flash-lite-preview-06-17",
+            "test_batch_name": f"batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            "session_id": None  # OCRテストセッション管理は後で実装
+        }
+        
+        # 🔍 テストDBデバッグログ
+        logger.info(f"🔍 テストDB Debug - user_email設定: {user_id}")
+        logger.info(f"🔍 テストDB Debug - test_record keys: {list(test_record.keys())}")
+        logger.info(f"🔍 テストDB Debug - file_name: {filename}")
+        
+        # テスト用データベースに保存
+        if hasattr(self.database_service, 'insert_test_result'):
+            save_result = self.database_service.insert_test_result(test_record)
+        else:
+            # フォールバック: 直接SQLで挿入
+            save_result = self._insert_test_result_direct(test_record)
+        
+        if not save_result:
+            raise Exception("テストデータベース保存に失敗しました")
+        
+        result_id = save_result.get('id')
+        logger.info(f"💾 テストDB保存完了: ID={result_id}")
+        
+        # 🔧 明細データもテスト用テーブルに保存
+        line_items = extracted_data.get('line_items', [])
+        if line_items and isinstance(line_items, list):
+            logger.info(f"📋 テスト明細データ保存開始: {len(line_items)}件")
+            self._insert_test_line_items(result_id, line_items)
+            logger.info(f"✅ テスト明細データ保存完了: {len(line_items)}件")
+        else:
+            logger.warning(f"⚠️ テスト明細データなし: {type(line_items)} - {line_items}")
+        
+        self._notify_progress(
+            WorkflowStatus.SAVING,
+            "テストデータベース保存",
+            90,
+            f"テストデータベース保存完了 (ID: {result_id})"
+        )
+        
+        return str(result_id)
+    
+    def _insert_test_result_direct(self, test_record: Dict[str, Any]) -> Dict[str, Any]:
+        """テスト用テーブルへの直接挿入（フォールバック）"""
+        try:
+            # Supabaseクライアントを直接使用
+            supabase = self.database_service.supabase
+            
+            result = supabase.table('ocr_test_results').insert(test_record).execute()
+            
+            if result.data and len(result.data) > 0:
+                return result.data[0]
+            else:
+                raise Exception("テスト用テーブル挿入結果が空です")
+                
+        except Exception as e:
+            logger.error(f"❌ テスト用テーブル直接挿入エラー: {e}")
+            raise
+    
+    def _insert_test_line_items(self, result_id: str, line_items: List[Dict[str, Any]]) -> None:
+        """テスト用明細テーブル（ocr_test_line_items）への保存"""
+        try:
+            from datetime import datetime, timezone, timedelta
+            jst = timezone(timedelta(hours=9))
+            jst_now = datetime.now(jst).isoformat()
+            
+            # Supabaseクライアントを直接使用
+            supabase = self.database_service.supabase
+            
+            for i, item in enumerate(line_items, 1):
+                # テスト明細データ準備
+                test_line_item_data = {
+                    'result_id': result_id,  # ocr_test_resultsのUUIDを参照
+                    'line_number': i,
+                    'item_description': str(item.get('description', item.get('item', item.get('product', '')))),
+                    'quantity': self._safe_numeric_value(item.get('quantity', item.get('qty'))),
+                    'unit_price': self._safe_numeric_value(item.get('unit_price', item.get('price'))),
+                    'amount': self._safe_numeric_value(item.get('amount', item.get('total'))),
+                    'tax_rate': self._safe_numeric_value(item.get('tax_rate', item.get('tax'))),
+                    'created_at': jst_now,
+                    'updated_at': jst_now
+                }
+                
+                # Noneや空文字列を除去
+                clean_line_data = {k: v for k, v in test_line_item_data.items() if v is not None and v != ''}
+                
+                # テスト用明細テーブルに挿入
+                result = supabase.table('ocr_test_line_items').insert(clean_line_data).execute()
+                
+                if not result.data:
+                    logger.warning(f"⚠️ テスト明細挿入失敗: 行{i}")
+                else:
+                    logger.debug(f"✅ テスト明細挿入成功: 行{i} - {clean_line_data.get('item_description', 'N/A')}")
+                    
+        except Exception as e:
+            logger.error(f"❌ テスト明細データ挿入エラー: {e}")
+    
+    def _safe_numeric_value(self, value) -> float:
+        """数値を安全に変換（テスト用）"""
+        if value is None:
+            return None
+        try:
+            return float(value) if value != '' else None
+        except (ValueError, TypeError):
+            return None
+    
+    def _determine_source_type(self, mode: str, file_info: Dict[str, Any]) -> str:
+        """処理モードとファイル情報からソースタイプを判定"""
+        if mode in ["ocr_test", "test"]:
+            return "gdrive"  # OCRテストはGoogle Drive固定
+        elif file_info.get("file_id"):
+            return "gdrive"  # Google Drive ID があればgdrive
+        elif file_info.get("gmail_message_id"):
+            return "gmail"   # Gmail Message ID があればgmail
+        else:
+            return "local"   # デフォルトはlocal
     
     def process_uploaded_files(self, 
                              uploaded_files, 
@@ -516,6 +753,7 @@ class UnifiedWorkflowEngine:
                     'success': result.success,
                     'invoice_id': result.invoice_id,
                     'extracted_data': result.extracted_data,
+                    'file_info': result.file_info,  # ★ PDFプレビュー用 file_info 追加 ★
                     'error_message': result.error_message,
                     'processing_time': result.processing_time
                 })
@@ -525,6 +763,7 @@ class UnifiedWorkflowEngine:
                 results.append({
                     'filename': file_info['filename'],
                     'success': False,
+                    'file_info': None,  # ★ エラー時はfile_info無し ★
                     'error_message': str(e),
                     'processing_time': 0
                 })
@@ -668,6 +907,16 @@ class UnifiedWorkflowEngine:
                 })
                 return validated_data
             
+            # ★ 外貨換算サービスが利用不可の場合はスキップ
+            if not self.currency_service:
+                logger.warning(f"⚠️ 外貨換算サービス未初期化のためスキップ: {filename}")
+                validated_data.update({
+                    'exchange_rate': None,
+                    'jpy_amount': amount,  # 元の金額を保持
+                    'currency_conversion_status': 'service_unavailable'
+                })
+                return validated_data
+            
             # 外貨換算実行
             if amount and amount > 0:
                 conversion_result = self.currency_service.convert_to_jpy(amount, currency)
@@ -717,6 +966,17 @@ class UnifiedWorkflowEngine:
             )
             
             logger.info(f"✅ 承認ワークフロー処理開始: {filename}")
+            
+            # ★ 承認ワークフローサービスが利用不可の場合はデフォルト設定
+            if not self.approval_service:
+                logger.warning(f"⚠️ 承認ワークフローサービス未初期化のためデフォルト設定: {filename}")
+                currency_data.update({
+                    'approval_status': 'auto_approved',
+                    'approved_by': 'system_default',
+                    'approved_at': datetime.now().isoformat(),
+                    'approval_reason': '承認サービス未初期化のため自動承認'
+                })
+                return currency_data
             
             # 承認要否評価
             approval_evaluation = self.approval_service.evaluate_approval_requirement(currency_data)
@@ -781,6 +1041,16 @@ class UnifiedWorkflowEngine:
             
             logger.info(f"📊 freee連携準備開始: {filename}")
             
+            # ★ freee連携サービスが利用不可の場合はスキップ
+            if not self.freee_service:
+                logger.warning(f"⚠️ freee連携サービス未初期化のためスキップ: {filename}")
+                approval_data.update({
+                    'freee_ready': False,
+                    'freee_preparation_status': 'service_unavailable',
+                    'exported_to_freee': False
+                })
+                return approval_data
+            
             # 承認済みの場合のみfreee連携準備
             approval_status = approval_data.get('approval_status', 'pending')
             
@@ -841,5 +1111,9 @@ class UnifiedWorkflowEngine:
         Returns:
             str: 推定カテゴリ
         """
+        # ★ freee連携サービスが利用不可の場合はデフォルトカテゴリ
+        if not self.freee_service:
+            return 'general'
+            
         # FreeeIntegrationService の _detect_expense_category を活用
         return self.freee_service._detect_expense_category(invoice_data) 

@@ -468,6 +468,18 @@ class DatabaseManager:
             
             if len(data) > 0:
                 invoice_id = data[0].get('id')
+                
+                # 🔧 明細データ挿入処理追加 ★LINE_ITEMS FIX★
+                extracted_data = invoice_data.get('extracted_data', {})
+                line_items = extracted_data.get('line_items', [])
+                
+                if line_items and isinstance(line_items, list):
+                    logger.info(f"📋 明細データ挿入開始: {len(line_items)}件")
+                    self._insert_line_items(invoice_id, line_items)
+                    logger.info(f"✅ 明細データ挿入完了: {len(line_items)}件")
+                else:
+                    logger.warning(f"⚠️ 明細データなし: {type(line_items)} - {line_items}")
+                
                 logger.info(f"🎉 40カラム請求書挿入成功: ID={invoice_id}, 企業={clean_data.get('issuer_name', 'N/A')}, ソース={clean_data.get('source_type', 'N/A')}")
                 return data[0]
             else:
@@ -483,6 +495,55 @@ class DatabaseManager:
             
             raise e
     
+    def _insert_line_items(self, invoice_id: int, line_items: List[Dict[str, Any]]) -> None:
+        """明細データをinvoice_line_itemsテーブルに挿入"""
+        try:
+            from datetime import datetime, timezone, timedelta
+            jst = timezone(timedelta(hours=9))
+            jst_now = datetime.now(jst).isoformat()
+            
+            for i, item in enumerate(line_items, 1):
+                # 明細データ準備
+                line_item_data = {
+                    'invoice_id': invoice_id,
+                    'line_number': i,
+                    'item_description': str(item.get('description', item.get('item', item.get('product', '')))),
+                    'quantity': self._safe_numeric(item.get('quantity', item.get('qty'))),
+                    'unit_price': self._safe_numeric(item.get('unit_price', item.get('price'))),
+                    'amount': self._safe_numeric(item.get('amount', item.get('total'))),
+                    'tax_rate': self._safe_numeric(item.get('tax_rate', item.get('tax'))),
+                    'created_at': jst_now,
+                    'updated_at': jst_now
+                }
+                
+                # Noneや空文字列を除去
+                clean_line_data = {k: v for k, v in line_item_data.items() if v is not None and v != ''}
+                
+                # データベースに挿入
+                result = self.supabase.table('invoice_line_items').insert(clean_line_data).execute()
+                
+                if not result.data:
+                    logger.warning(f"⚠️ 明細挿入失敗: 行{i}")
+                else:
+                    logger.debug(f"✅ 明細挿入成功: 行{i} - {clean_line_data.get('item_description', 'N/A')}")
+                    
+        except Exception as e:
+            logger.error(f"❌ 明細データ挿入エラー: {e}")
+            # 明細挿入失敗しても請求書処理は続行
+    
+    def _safe_numeric(self, value) -> float:
+        """数値を安全に変換"""
+        if value is None or value == '':
+            return None
+        try:
+            if isinstance(value, str):
+                # 文字列から数値変換（カンマ除去など）
+                cleaned = value.replace(',', '').replace('¥', '').replace('$', '').strip()
+                return float(cleaned) if cleaned else None
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+
     def _calculate_completeness_score(self, extracted_data: Dict) -> float:
         """AI抽出データの完全性スコアを計算"""
         try:

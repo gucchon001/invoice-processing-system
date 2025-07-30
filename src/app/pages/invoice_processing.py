@@ -885,8 +885,21 @@ def render_pdf_preview_enhanced(result: Dict[str, Any], filename: str):
     # PDF表示の試行
     if st.button(f"📄 {filename} を表示", key=f"show_pdf_{id(result)}"):
         try:
-            # Google Driveからファイル取得を試行
-            google_drive = get_google_drive()
+            # Google Driveからファイル取得を試行（エラーハンドリング強化）
+            google_drive = None
+            try:
+                google_drive = get_google_drive()
+            except Exception as e:
+                logger.warning(f"Google Drive API初期化エラー: {e}")
+                st.warning("🔧 Google Drive API認証が設定されていません")
+                st.info("📝 PDFプレビュー機能を使用するには、Google Drive API認証の設定が必要です")
+                st.code("""
+# 必要な設定:
+# 1. .streamlit/secrets.toml ファイル作成
+# 2. Google Drive API認証情報を設定
+                """)
+                return
+            
             if google_drive and file_info.get('file_id'):
                 with st.spinner("PDFを読み込み中..."):
                     # ファイルをダウンロード
@@ -921,8 +934,13 @@ def render_pdf_preview_enhanced(result: Dict[str, Any], filename: str):
                     else:
                         st.error("📥 PDFファイルの取得に失敗しました")
             else:
-                st.warning("🔧 Google Driveマネージャーまたはファイル情報が利用できません")
-                st.info("OCRテスト時のファイル情報が不足している可能性があります")
+                st.warning("🔧 PDFプレビュー機能が利用できません")
+                if not google_drive:
+                    st.info("📝 原因: Google Drive APIサービスが利用できません")
+                elif not file_info.get('file_id'):
+                    st.info("📝 原因: Google DriveファイルIDが見つかりません")
+                else:
+                    st.info("📝 原因: 不明（ファイル情報を確認してください）")
         
         except Exception as e:
             st.error(f"PDF表示エラー: {str(e)}")
