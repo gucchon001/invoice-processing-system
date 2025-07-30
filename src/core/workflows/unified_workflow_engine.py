@@ -743,6 +743,7 @@ class UnifiedWorkflowEngine:
                 # 自動承認可能な場合
                 # 本番環境では制約適合値 'approved' を使用
                 approval_status_value = 'approved' if mode not in ['ocr_test', 'test'] else 'auto_approved'
+                logger.info(f"🔍 Debug: mode={mode}, approval_status_value={approval_status_value}")
                 currency_data.update({
                     'approval_status': approval_status_value,
                     'approved_by': 'system',
