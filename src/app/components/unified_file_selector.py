@@ -46,26 +46,78 @@ class UnifiedFileSelector:
         
         st.markdown("### 📤 ファイル選択")
         
+        # アクティブタブの状態管理
+        active_tab_key = f"{self.prefix_key}_active_tab"
+        if active_tab_key not in st.session_state:
+            st.session_state[active_tab_key] = "local"
+        
         # ファイル選択方法のタブ
         tab1, tab2 = st.tabs(["💻 ローカルファイル", "☁️ Google Drive"])
         
-        files = []
-        source_type = "local"
-        metadata = {}
+        local_files = []
+        local_metadata = {}
+        gdrive_files = []
+        gdrive_metadata = {}
         
         with tab1:
-            files, metadata = self._render_local_upload()
-            if files:
-                source_type = "local"
+            # ローカルタブがアクティブになったことを記録
+            if st.button("🎯 ローカルファイルを使用", key=f"{self.prefix_key}_select_local", help="このタブでファイルを選択します"):
+                st.session_state[active_tab_key] = "local"
+                # Google Driveの選択をクリア
+                gdrive_session_key = f"{self.prefix_key}_gdrive_files"
+                if gdrive_session_key in st.session_state:
+                    del st.session_state[gdrive_session_key]
+                st.rerun()
+            
+            local_files, local_metadata = self._render_local_upload()
+            
+            # ローカルファイルが選択された場合、アクティブタブを更新
+            if local_files and st.session_state[active_tab_key] != "local":
+                st.session_state[active_tab_key] = "local"
         
         with tab2:
+            # Google Driveタブがアクティブになったことを記録
+            if st.button("🎯 Google Driveを使用", key=f"{self.prefix_key}_select_gdrive", help="このタブでファイルを選択します"):
+                st.session_state[active_tab_key] = "google_drive"
+                # ローカルファイルの選択をクリア（セッション状態）
+                local_session_key = f"{self.prefix_key}_local_upload"
+                if local_session_key in st.session_state:
+                    del st.session_state[local_session_key]
+                st.rerun()
+            
             gdrive_files, gdrive_metadata = self._render_google_drive_selection()
-            if gdrive_files:
-                files = gdrive_files
-                source_type = "google_drive"
-                metadata = gdrive_metadata
+            
+            # Google Driveファイルが選択された場合、アクティブタブを更新
+            if gdrive_files and st.session_state[active_tab_key] != "google_drive":
+                st.session_state[active_tab_key] = "google_drive"
         
-        return files, source_type, metadata
+        # アクティブタブに基づいて戻り値を決定
+        active_tab = st.session_state[active_tab_key]
+        
+        if active_tab == "local" and local_files:
+            # ローカルファイルの状況表示
+            st.info(f"🎯 **選択中**: 💻 ローカルファイル ({len(local_files)}件)")
+            return local_files, "local", local_metadata
+        elif active_tab == "google_drive" and gdrive_files:
+            # Google Driveファイルの状況表示
+            folder_name = gdrive_metadata.get('folder_name', 'Unknown')
+            st.info(f"🎯 **選択中**: ☁️ Google Drive「{folder_name}」({len(gdrive_files)}件)")
+            return gdrive_files, "google_drive", gdrive_metadata
+        elif local_files and not gdrive_files:
+            # ローカルファイルのみがある場合
+            st.info(f"🎯 **選択中**: 💻 ローカルファイル ({len(local_files)}件)")
+            return local_files, "local", local_metadata
+        elif gdrive_files and not local_files:
+            # Google Driveファイルのみがある場合
+            folder_name = gdrive_metadata.get('folder_name', 'Unknown')
+            st.info(f"🎯 **選択中**: ☁️ Google Drive「{folder_name}」({len(gdrive_files)}件)")
+            return gdrive_files, "google_drive", gdrive_metadata
+        else:
+            # ファイルが選択されていない場合
+            st.warning("📝 上記のタブからファイルを選択してください")
+            return [], "local", {}
+        
+        return [], "local", {}
     
     def _render_local_upload(self) -> Tuple[List[Any], Dict[str, Any]]:
         """ローカルファイルアップロードUI"""
@@ -91,6 +143,36 @@ class UnifiedFileSelector:
     def _render_google_drive_selection(self) -> Tuple[List[Any], Dict[str, Any]]:
         """Google Drive選択UI"""
         st.markdown("#### ☁️ Google Driveフォルダからファイルを選択")
+        
+        # セッション状態のキー
+        gdrive_files_key = f"{self.prefix_key}_gdrive_files"
+        gdrive_metadata_key = f"{self.prefix_key}_gdrive_metadata"
+        
+        # 既存の選択をクリアするボタン
+        col_clear, col_space = st.columns([1, 3])
+        with col_clear:
+            if st.button("🗑️ 選択クリア", key=f"{self.prefix_key}_gdrive_clear", help="Google Driveの選択をクリアします"):
+                if gdrive_files_key in st.session_state:
+                    del st.session_state[gdrive_files_key]
+                if gdrive_metadata_key in st.session_state:
+                    del st.session_state[gdrive_metadata_key]
+                st.rerun()
+        
+        # 既存の選択がある場合は表示
+        if gdrive_files_key in st.session_state and st.session_state[gdrive_files_key]:
+            existing_files = st.session_state[gdrive_files_key]
+            existing_metadata = st.session_state.get(gdrive_metadata_key, {})
+            folder_name = existing_metadata.get('folder_name', 'Unknown')
+            
+            st.success(f"✅ 既に選択済み: 「{folder_name}」から{len(existing_files)}件")
+            
+            with st.expander("📋 選択済みファイル一覧", expanded=False):
+                for i, file_info in enumerate(existing_files[:10], 1):
+                    st.text(f"{i}. {file_info.get('name', 'Unknown')}")
+                if len(existing_files) > 10:
+                    st.text(f"... 他 {len(existing_files) - 10} 件")
+            
+            return existing_files, existing_metadata
         
         # Google Drive API チェック
         google_drive = None
@@ -127,9 +209,6 @@ class UnifiedFileSelector:
                 key=f"{self.prefix_key}_gdrive_max_files"
             )
         
-        files = []
-        metadata = {}
-        
         if folder_id and st.button(
             "📁 フォルダからファイル取得", 
             key=f"{self.prefix_key}_gdrive_fetch",
@@ -138,7 +217,6 @@ class UnifiedFileSelector:
             try:
                 with st.spinner("Google Driveからファイルリストを取得中..."):
                     # Google Driveからファイル取得のロジック
-                    # （実際の実装は既存のOCRTestManagerから移植）
                     files_data = self._fetch_gdrive_files(google_drive, folder_id, max_files)
                     files = files_data.get('files', [])
                     metadata = {
@@ -146,10 +224,16 @@ class UnifiedFileSelector:
                         "max_files": max_files,
                         "file_count": len(files),
                         "folder_name": files_data.get('folder_name', ''),
-                        "file_names": [f.get('name', '') for f in files]
+                        "file_names": [f.get('name', '') for f in files],
+                        "total_found": files_data.get('total_found', len(files)),
+                        "limited_to": files_data.get('limited_to', len(files))
                     }
                 
                 if files:
+                    # セッション状態に保存
+                    st.session_state[gdrive_files_key] = files
+                    st.session_state[gdrive_metadata_key] = metadata
+                    
                     st.success(f"✅ {len(files)}件のPDFファイルを取得しました")
                     
                     # ファイル一覧表示
@@ -158,6 +242,8 @@ class UnifiedFileSelector:
                             st.text(f"{i}. {file_info.get('name', 'Unknown')}")
                         if len(files) > 10:
                             st.text(f"... 他 {len(files) - 10} 件")
+                    
+                    st.rerun()  # UI更新
                 else:
                     st.warning("📭 指定フォルダにPDFファイルが見つかりませんでした")
                     
@@ -165,7 +251,7 @@ class UnifiedFileSelector:
                 st.error(f"❌ Google Driveからのファイル取得に失敗: {e}")
                 self.logger.error(f"Google Drive file fetch error: {e}")
         
-        return files, metadata
+        return [], {}
     
     def _fetch_gdrive_files(self, google_drive, folder_id: str, max_files: int) -> Dict[str, Any]:
         """
