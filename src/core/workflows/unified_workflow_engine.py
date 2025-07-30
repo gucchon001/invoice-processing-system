@@ -115,7 +115,7 @@ class UnifiedWorkflowEngine:
             approval_data = self._unified_approval_workflow(currency_data, filename)
             
             # 🆕 Step 2.8: freee連携準備 ★v3.0 NEW★
-            integration_data = self._unified_freee_preparation(approval_data, filename)
+            integration_data = self._unified_freee_preparation(approval_data, filename, mode)
             
             # Step 3: 統一データベース保存処理（40カラム完全対応）
             invoice_id = self._unified_database_save(
@@ -741,8 +741,10 @@ class UnifiedWorkflowEngine:
                 
             else:
                 # 自動承認可能な場合
+                # 本番環境では制約適合値 'approved' を使用
+                approval_status_value = 'approved' if mode not in ['ocr_test', 'test'] else 'auto_approved'
                 currency_data.update({
-                    'approval_status': 'auto_approved',
+                    'approval_status': approval_status_value,
                     'approved_by': 'system',
                     'approved_at': datetime.now().isoformat(),
                     'approval_reason': '自動承認基準を満たす'
@@ -761,7 +763,7 @@ class UnifiedWorkflowEngine:
             })
             return currency_data
     
-    def _unified_freee_preparation(self, approval_data: Dict[str, Any], filename: str) -> Dict[str, Any]:
+    def _unified_freee_preparation(self, approval_data: Dict[str, Any], filename: str, mode: str = "upload") -> Dict[str, Any]:
         """統一freee連携準備処理（40カラム新機能）
         
         Args:
@@ -784,7 +786,9 @@ class UnifiedWorkflowEngine:
             # 承認済みの場合のみfreee連携準備
             approval_status = approval_data.get('approval_status', 'pending')
             
-            if approval_status in ['approved', 'auto_approved']:
+            # 本番環境では 'approved'、テスト環境では 'approved' または 'auto_approved' をチェック
+            approved_statuses = ['approved'] if mode not in ['ocr_test', 'test'] else ['approved', 'auto_approved']
+            if approval_status in approved_statuses:
                 # 承認済み：freee連携準備実行
                 try:
                     # freee連携データ準備（実際の連携は別途実行）
