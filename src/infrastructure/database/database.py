@@ -400,7 +400,7 @@ class DatabaseManager:
                 'processing_time': invoice_data.get('processing_time'),
                 
                 # ✅ 承認ワークフロー（3カラム） - 🆕 新機能3カラム追加
-                'approval_status': invoice_data.get('approval_status', 'pending'),   # 🆕 承認状況
+                'approval_status': 'approved' if invoice_data.get('approval_status') == 'auto_approved' else invoice_data.get('approval_status', 'pending'),  # 🆕 承認状況（制約適合）
                 'approved_by': invoice_data.get('approved_by'),                       # 🆕 承認者
                 'approved_at': invoice_data.get('approved_at'),                       # 🆕 承認日時
                 
