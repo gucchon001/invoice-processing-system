@@ -197,16 +197,9 @@ def render_ocr_test_content():
     # 統合ファイル選択UI（ローカル + Google Drive）
     files, source_type, file_metadata = render_unified_file_selector("ocr_test")
     
-    # 従来のフォルダID設定は下位互換性のため保持
-    if source_type == "google_drive" and not files:
-        st.markdown("### 📁 手動フォルダID指定")
-        st.caption("⚠️ 上記のGoogle Drive選択で取得できない場合のみ使用してください")
-        default_folder_id = "1ZCJsI9j8A9VJcmiY79BcP1jgzsD51X6E"
-        folder_id = st.text_input(
-            "Google DriveフォルダID（手動）",
-            value=default_folder_id,
-            help="テスト対象PDFが格納されたGoogle DriveフォルダのID"
-        )
+    # 統合ファイル選択でファイルが選択されていない場合の警告
+    if not files:
+        st.warning("📝 上記のタブからファイルを選択してください")
     
     # セッション状態の初期化
     if "ocr_test_results" not in st.session_state:
@@ -234,8 +227,8 @@ def render_ocr_test_content():
         if st.button(button_text, type="primary", use_container_width=True, key="ocr_test_start_button"):
             if not selected_prompt_key:
                 st.error("プロンプトが選択されていません")
-            elif not files and not folder_id:
-                st.error("ファイルを選択するかフォルダIDを入力してください")
+            elif not files:
+                st.error("上記のタブからファイルを選択してください")
             elif not st.session_state.is_ocr_testing:
                 # 統合OCRテスト実行（ローカル/Google Drive対応）
                 execute_unified_ocr_test_enhanced(
@@ -248,15 +241,8 @@ def render_ocr_test_content():
                     include_validation
                 )
                 
-                # 下位互換性：従来のフォルダID指定がある場合
-                if not files and 'folder_id' in locals() and folder_id:
-                    execute_unified_ocr_test(
-                        folder_id,
-                        selected_prompt_key,
-                        max_files,
-                        test_mode,
-                        include_validation
-                    )
+                # 下位互換性：統合ファイル選択で何も選択されていない場合の従来処理は削除
+                # （統合UIで必ず何かが選択されるため、この分岐は不要）
             else:
                 st.warning("現在テスト実行中です。しばらくお待ちください。")
     
@@ -309,14 +295,14 @@ def execute_unified_upload_processing(files, prompt_key, include_validation, sav
         elif source_type == "google_drive":
             folder_id = file_metadata.get('folder_id', '')
             folder_name = file_metadata.get('folder_name', 'Unknown Folder')
+            max_files = file_metadata.get('max_files', -1)
             st.info(f"☁️ Google Drive「{folder_name}」から{len(files)}件を本番データベースに保存します")
             with st.spinner("統一ワークフローエンジンでGoogle Driveファイル処理中..."):
-                # Google Driveファイル処理（バッチ処理として実行）
-                batch_result = engine.process_batch_files(
-                    files_info=files,
+                # Google Driveファイル処理（本番アップロード用）
+                batch_result = engine.process_production_upload_from_drive(
+                    folder_id=folder_id,
                     user_id=user_id,
-                    mode="upload",
-                    source_type="google_drive"
+                    max_files=max_files
                 )
         else:
             st.error(f"❌ 未対応のソースタイプ: {source_type}")
@@ -430,15 +416,16 @@ def execute_unified_ocr_test_enhanced(files, source_type, file_metadata, prompt_
                 )
         
         elif source_type == "google_drive":
+            folder_id = file_metadata.get('folder_id', '')
             folder_name = file_metadata.get('folder_name', 'Unknown Folder')
+            max_files = file_metadata.get('max_files', -1)
             st.info(f"☁️ Google Drive「{folder_name}」から{len(files)}件でOCRテストを実行します")
             with st.spinner("統一ワークフローエンジンでGoogle DriveファイルOCRテスト中..."):
-                # Google DriveファイルOCRテスト処理
-                batch_result = engine.process_batch_files(
-                    files_info=files,
+                # Google DriveファイルOCRテスト処理（既存メソッド使用）
+                batch_result = engine.process_ocr_test_from_drive(
+                    folder_id=folder_id,
                     user_id=user_id,
-                    mode="ocr_test",  # OCRテストモード
-                    source_type="google_drive"
+                    max_files=max_files
                 )
         else:
             st.error(f"❌ 未対応のソースタイプ: {source_type}")
