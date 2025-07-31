@@ -311,13 +311,38 @@ def execute_unified_upload_processing(files, prompt_key, include_validation, sav
             folder_name = file_metadata.get('folder_name', 'Unknown Folder')
             st.info(f"☁️ Google Drive「{folder_name}」から{len(files)}件を本番データベースに保存します")
             with st.spinner("統一ワークフローエンジンでGoogle Driveファイル処理中..."):
-                # Google Driveファイル処理（バッチ処理として実行）
-                batch_result = engine.process_batch_files(
-                    files_info=files,
-                    user_id=user_id,
-                    mode="upload",
-                    source_type="google_drive"
-                )
+                # Google Driveファイルをダウンロードして変換
+                files_data = []
+                for file_info in files:
+                    try:
+                        # Google Driveからファイルをダウンロード
+                        google_drive = get_google_drive()
+                        if google_drive:
+                            file_data = google_drive.download_file(file_info['id'])
+                            if file_data:
+                                files_data.append({
+                                    'filename': file_info['name'],
+                                    'data': file_data
+                                })
+                            else:
+                                logger.warning(f"ファイルダウンロード失敗: {file_info['name']}")
+                        else:
+                            logger.error("Google Drive API が利用できません")
+                            break
+                    except Exception as e:
+                        logger.error(f"ファイル '{file_info.get('name', 'Unknown')}' のダウンロードエラー: {e}")
+                        continue
+                
+                if files_data:
+                    # 正しい引数でprocess_batch_filesを呼び出し
+                    batch_result = engine.process_batch_files(
+                        files_data=files_data,
+                        user_id=user_id,
+                        mode="upload"
+                    )
+                else:
+                    st.error("❌ Google Driveファイルのダウンロードに失敗しました")
+                    return
         else:
             st.error(f"❌ 未対応のソースタイプ: {source_type}")
             return
@@ -433,13 +458,38 @@ def execute_unified_ocr_test_enhanced(files, source_type, file_metadata, prompt_
             folder_name = file_metadata.get('folder_name', 'Unknown Folder')
             st.info(f"☁️ Google Drive「{folder_name}」から{len(files)}件でOCRテストを実行します")
             with st.spinner("統一ワークフローエンジンでGoogle DriveファイルOCRテスト中..."):
-                # Google DriveファイルOCRテスト処理
-                batch_result = engine.process_batch_files(
-                    files_info=files,
-                    user_id=user_id,
-                    mode="ocr_test",  # OCRテストモード
-                    source_type="google_drive"
-                )
+                # Google Driveファイルをダウンロードして変換
+                files_data = []
+                for file_info in files:
+                    try:
+                        # Google Driveからファイルをダウンロード
+                        google_drive = get_google_drive()
+                        if google_drive:
+                            file_data = google_drive.download_file(file_info['id'])
+                            if file_data:
+                                files_data.append({
+                                    'filename': file_info['name'],
+                                    'data': file_data
+                                })
+                            else:
+                                logger.warning(f"ファイルダウンロード失敗: {file_info['name']}")
+                        else:
+                            logger.error("Google Drive API が利用できません")
+                            break
+                    except Exception as e:
+                        logger.error(f"ファイル '{file_info.get('name', 'Unknown')}' のダウンロードエラー: {e}")
+                        continue
+                
+                if files_data:
+                    # 正しい引数でprocess_batch_filesを呼び出し
+                    batch_result = engine.process_batch_files(
+                        files_data=files_data,
+                        user_id=user_id,
+                        mode="ocr_test"  # OCRテストモード
+                    )
+                else:
+                    st.error("❌ Google Driveファイルのダウンロードに失敗しました")
+                    return
         else:
             st.error(f"❌ 未対応のソースタイプ: {source_type}")
             return
