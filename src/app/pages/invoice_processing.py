@@ -309,14 +309,14 @@ def execute_unified_upload_processing(files, prompt_key, include_validation, sav
         elif source_type == "google_drive":
             folder_id = file_metadata.get('folder_id', '')
             folder_name = file_metadata.get('folder_name', 'Unknown Folder')
+            max_files = file_metadata.get('max_files', len(files))
             st.info(f"☁️ Google Drive「{folder_name}」から{len(files)}件を本番データベースに保存します")
             with st.spinner("統一ワークフローエンジンでGoogle Driveファイル処理中..."):
-                # Google Driveファイル処理（バッチ処理として実行）
-                batch_result = engine.process_batch_files(
-                    files_info=files,
+                # Google Driveファイル処理（既存のOCRテスト機能を本番アップロード用に流用）
+                batch_result = engine.process_upload_from_drive(
+                    folder_id=folder_id,
                     user_id=user_id,
-                    mode="upload",
-                    source_type="google_drive"
+                    max_files=max_files
                 )
         else:
             st.error(f"❌ 未対応のソースタイプ: {source_type}")
@@ -430,15 +430,16 @@ def execute_unified_ocr_test_enhanced(files, source_type, file_metadata, prompt_
                 )
         
         elif source_type == "google_drive":
+            folder_id = file_metadata.get('folder_id', '')
             folder_name = file_metadata.get('folder_name', 'Unknown Folder')
+            max_files_actual = file_metadata.get('max_files', len(files))
             st.info(f"☁️ Google Drive「{folder_name}」から{len(files)}件でOCRテストを実行します")
             with st.spinner("統一ワークフローエンジンでGoogle DriveファイルOCRテスト中..."):
-                # Google DriveファイルOCRテスト処理
-                batch_result = engine.process_batch_files(
-                    files_info=files,
+                # Google DriveファイルOCRテスト処理（既存メソッド使用）
+                batch_result = engine.process_ocr_test_from_drive(
+                    folder_id=folder_id,
                     user_id=user_id,
-                    mode="ocr_test",  # OCRテストモード
-                    source_type="google_drive"
+                    max_files=max_files_actual
                 )
         else:
             st.error(f"❌ 未対応のソースタイプ: {source_type}")
