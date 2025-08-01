@@ -800,19 +800,30 @@ class UnifiedWorkflowEngine:
         """進捗履歴リセット"""
         self.progress_history.clear() 
 
-    def process_upload_from_drive(self, folder_id: str, user_id: str, max_files: int = -1) -> Dict[str, Any]:
+    def process_drive_files(self, folder_id: str, user_id: str, max_files: int = -1, mode: str = "upload") -> Dict[str, Any]:
         """
-        Google Driveの指定フォルダからファイルを取得して本番アップロード処理を実行する
+        Google Driveの指定フォルダからファイルを取得して処理を実行する統合メソッド
 
         Args:
             folder_id (str): Google DriveのフォルダID
             user_id (str): 実行ユーザーID
             max_files (int, optional): 処理する最大ファイル数. Defaults to -1 (すべて).
+            mode (str, optional): 処理モード ("upload" または "ocr_test"). Defaults to "upload".
 
         Returns:
             Dict[str, Any]: process_batch_files と同じ形式のバッチ処理結果
         """
-        self._notify_progress(WorkflowStatus.PROCESSING, "UPLOAD_PREPARATION", 5, f"Google Driveフォルダからファイルリスト取得開始: {folder_id}")
+        # モードに応じた進捗メッセージとステップ名を設定
+        if mode == "upload":
+            step_prefix = "UPLOAD"
+            process_name = "本番アップロード"
+        elif mode == "ocr_test":
+            step_prefix = "OCR_TEST"
+            process_name = "OCRテスト"
+        else:
+            raise ValueError(f"Unsupported mode: {mode}")
+
+        self._notify_progress(WorkflowStatus.PROCESSING, f"{step_prefix}_PREPARATION", 5, f"Google Driveフォルダからファイルリスト取得開始: {folder_id}")
 
         try:
             # 1. Google Driveからファイル一覧取得
@@ -831,7 +842,7 @@ class UnifiedWorkflowEngine:
             if max_files != -1 and len(pdf_files) > max_files:
                 pdf_files = pdf_files[:max_files]
             
-            self._notify_progress(WorkflowStatus.PROCESSING, "UPLOAD_PREPARATION", 10, f"{len(pdf_files)}件のPDFファイルをダウンロードします")
+            self._notify_progress(WorkflowStatus.PROCESSING, f"{step_prefix}_PREPARATION", 10, f"{len(pdf_files)}件のPDFファイルをダウンロードします")
 
             # 3. ファイルダウンロードとデータ準備
             files_data = []
@@ -850,31 +861,45 @@ class UnifiedWorkflowEngine:
                         logger.warning(f"ファイルダウンロード失敗（データが空）: {file_info['name']}")
                         
                 except Exception as e:
-                    logger.error(f"ファイルダウンロードエラー: {file_info['name']} - {e}")
+                    if mode == "ocr_test":
+                        logger.error(f"ファイル処理エラー（ダウンロード中）: {file_info['name']} - {e}", exc_info=True)
+                    else:
+                        logger.error(f"ファイルダウンロードエラー: {file_info['name']} - {e}")
 
             if not files_data:
-                logger.warning("ダウンロード可能なファイルがありません")
-                return {"error": "No files could be downloaded", "results": [], "total_files": 0, "successful_files": 0, "failed_files": 0}
+                if mode == "ocr_test":
+                    logger.error("処理可能なファイルのダウンロードにすべて失敗しました。")
+                    return {"error": "Failed to download any processable files.", "results": [], "total_files": len(pdf_files), "successful_files": 0, "failed_files": len(pdf_files)}
+                else:
+                    logger.warning("ダウンロード可能なファイルがありません")
+                    return {"error": "No files could be downloaded", "results": [], "total_files": 0, "successful_files": 0, "failed_files": 0}
 
-            self._notify_progress(WorkflowStatus.PROCESSING, "UPLOAD_START", 30, f"{len(files_data)}件のファイルで本番アップロード処理を開始します")
-
-            # 4. バッチ処理実行（本番アップロードモード）
-            batch_result = self.process_batch_files(files_data, user_id, mode="upload")
-            
-            self._notify_progress(WorkflowStatus.COMPLETED, "UPLOAD_COMPLETED", 100, f"Google Driveからの本番アップロード処理が完了しました")
+            # 4. バッチ処理実行
+            if mode == "upload":
+                self._notify_progress(WorkflowStatus.PROCESSING, "UPLOAD_START", 30, f"{len(files_data)}件のファイルで本番アップロード処理を開始します")
+                batch_result = self.process_batch_files(files_data, user_id, mode="upload")
+                self._notify_progress(WorkflowStatus.COMPLETED, "UPLOAD_COMPLETED", 100, f"Google Driveからの本番アップロード処理が完了しました")
+            elif mode == "ocr_test":
+                self._notify_progress(WorkflowStatus.PROCESSING, "BATCH_PROCESSING_START", 30, "AIによる一括解析処理を開始します")
+                batch_result = self.process_batch_files(files_data=files_data, user_id=user_id, mode="ocr_test")
             
             return batch_result
 
         except Exception as e:
             error_message = str(e)
-            logger.error(f"Google Drive本番アップロード処理エラー: {error_message}")
-            self._notify_progress(WorkflowStatus.FAILED, "UPLOAD_ERROR", 0, f"処理に失敗しました: {error_message}")
-            return {"error": error_message, "results": [], "total_files": 0, "successful_files": 0, "failed_files": 0}
+            if mode == "ocr_test":
+                logger.error(f"OCRテスト準備フェーズでエラーが発生: {e}", exc_info=True)
+                self._notify_progress(WorkflowStatus.FAILED, "OCR_TEST_PREPARATION", 0, f"OCRテスト準備エラー: {e}")
+                return {"error": f"An error occurred during OCR test preparation: {e}"}
+            else:
+                logger.error(f"Google Drive本番アップロード処理エラー: {error_message}")
+                self._notify_progress(WorkflowStatus.FAILED, "UPLOAD_ERROR", 0, f"処理に失敗しました: {error_message}")
+                return {"error": error_message, "results": [], "total_files": 0, "successful_files": 0, "failed_files": 0}
 
-    def process_ocr_test_from_drive(self, folder_id: str, user_id: str, max_files: int = -1) -> Dict[str, Any]:
+    def process_upload_from_drive(self, folder_id: str, user_id: str, max_files: int = -1) -> Dict[str, Any]:
         """
-        Google Driveの指定フォルダからファイルを取得してOCRテストを実行する
-
+        Google Driveの指定フォルダからファイルを取得して本番アップロード処理を実行する
+        
         Args:
             folder_id (str): Google DriveのフォルダID
             user_id (str): 実行ユーザーID
@@ -883,62 +908,21 @@ class UnifiedWorkflowEngine:
         Returns:
             Dict[str, Any]: process_batch_files と同じ形式のバッチ処理結果
         """
-        self._notify_progress(WorkflowStatus.PROCESSING, "OCR_TEST_PREPARATION", 5, f"Google Driveフォルダからファイルリスト取得開始: {folder_id}")
+        return self.process_drive_files(folder_id=folder_id, user_id=user_id, max_files=max_files, mode="upload")
 
-        try:
-            # 1. Google Driveからファイル一覧取得
-            if not self.storage_service:
-                raise ValueError("Storage service (Google Drive) is not configured.")
-            
-            from utils.ocr_test_helper import OCRTestManager
-            ocr_manager = OCRTestManager(self.storage_service, None, None)
-            pdf_files = ocr_manager.get_drive_pdfs(folder_id)
+    def process_ocr_test_from_drive(self, folder_id: str, user_id: str, max_files: int = -1) -> Dict[str, Any]:
+        """
+        Google Driveの指定フォルダからファイルを取得してOCRテストを実行する
+        
+        Args:
+            folder_id (str): Google DriveのフォルダID
+            user_id (str): 実行ユーザーID
+            max_files (int, optional): 処理する最大ファイル数. Defaults to -1 (すべて).
 
-            if not pdf_files:
-                logger.warning(f"指定フォルダにPDFファイルが見つかりません: {folder_id}")
-                return {"error": f"No PDF files found in folder {folder_id}", "results": [], "total_files": 0, "successful_files": 0, "failed_files": 0}
-
-            # 2. ファイル数制限
-            if max_files != -1 and len(pdf_files) > max_files:
-                pdf_files = pdf_files[:max_files]
-            
-            self._notify_progress(WorkflowStatus.PROCESSING, "OCR_TEST_PREPARATION", 10, f"{len(pdf_files)}件のPDFファイルをダウンロードします")
-
-            # 3. ファイルダウンロードとデータ準備
-            files_data = []
-            for i, file_info in enumerate(pdf_files):
-                try:
-                    progress = 10 + int((i / len(pdf_files)) * 20) # 10%-30%
-                    self._notify_progress(WorkflowStatus.PROCESSING, "FILE_DOWNLOAD", progress, f"ファイルダウンロード中 ({i+1}/{len(pdf_files)}): {file_info['name']}")
-                    
-                    file_data = self.storage_service.download_file(file_info['id'])
-                    if file_data:
-                        files_data.append({
-                            'filename': file_info['name'],
-                            'data': file_data
-                        })
-                    else:
-                        logger.warning(f"ファイルダウンロード失敗（データが空）: {file_info['name']}")
-
-                except Exception as e:
-                    logger.error(f"ファイル処理エラー（ダウンロード中）: {file_info['name']} - {e}", exc_info=True)
-            
-            if not files_data:
-                logger.error("処理可能なファイルのダウンロードにすべて失敗しました。")
-                return {"error": "Failed to download any processable files.", "results": [], "total_files": len(pdf_files), "successful_files": 0, "failed_files": len(pdf_files)}
-
-            # 4. 既存のバッチ処理メソッドを呼び出し
-            self._notify_progress(WorkflowStatus.PROCESSING, "BATCH_PROCESSING_START", 30, "AIによる一括解析処理を開始します")
-            return self.process_batch_files(
-                files_data=files_data,
-                user_id=user_id,
-                mode="ocr_test"
-            )
-
-        except Exception as e:
-            logger.error(f"OCRテスト準備フェーズでエラーが発生: {e}", exc_info=True)
-            self._notify_progress(WorkflowStatus.FAILED, "OCR_TEST_PREPARATION", 0, f"OCRテスト準備エラー: {e}")
-            return {"error": f"An error occurred during OCR test preparation: {e}"} 
+        Returns:
+            Dict[str, Any]: process_batch_files と同じ形式のバッチ処理結果
+        """
+        return self.process_drive_files(folder_id=folder_id, user_id=user_id, max_files=max_files, mode="ocr_test") 
     
     # ============================================================
     # 🆕 40カラム新機能処理メソッド ★v3.0 NEW★
