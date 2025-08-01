@@ -7,7 +7,7 @@
 # 既存サービス
 from .unified_prompt_manager import UnifiedPromptManager
 from .invoice_validator import InvoiceValidator
-# from .workflow_display_manager import WorkflowDisplayManager  # 削除済み（2025-07-30）
+
 
 # 40カラム新機能サービス ★v3.0 NEW★
 from .currency_conversion_service import CurrencyConversionService

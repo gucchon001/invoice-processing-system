@@ -32,6 +32,59 @@ except ImportError as e:
     st.stop()
 
 
+# ========================================
+# 共通ヘルパー関数
+# ========================================
+
+def _get_current_user_id() -> str:
+    """現在のユーザーIDを取得"""
+    user_info = get_current_user()
+    return user_info.get('email', 'test@example.com') if user_info else 'test@example.com'
+
+
+def _create_progress_callback() -> callable:
+    """統一進捗コールバック関数を作成"""
+    def progress_callback(progress):
+        logger.info(f"📊 処理進捗: {progress.step} ({progress.progress_percent}%) - {progress.message}")
+    return progress_callback
+
+
+def _initialize_processing_session(session_key: str = "is_processing") -> None:
+    """処理セッション状態を初期化"""
+    st.session_state[session_key] = True
+    if "ocr_test_results" not in st.session_state:
+        st.session_state.ocr_test_results = []
+
+
+def _get_unified_engine():
+    """統一ワークフローエンジンを取得（エラーハンドリング付き）"""
+    if 'unified_engine' not in st.session_state:
+        st.error("❌ 統一ワークフローエンジンが初期化されていません")
+        return None
+    return st.session_state.unified_engine
+
+
+def _display_processing_info(source_type: str, files, file_metadata: dict, process_type: str = "処理"):
+    """処理開始時の情報表示を統一"""
+    if source_type == "local":
+        st.info(f"💻 ローカルファイル {len(files)}件で{process_type}を実行します")
+    elif source_type == "google_drive":
+        folder_name = file_metadata.get('folder_name', 'Unknown Folder')
+        st.info(f"☁️ Google Drive「{folder_name}」から{len(files)}件で{process_type}を実行します")
+
+
+def _display_processing_success(source_type: str, process_type: str = "処理"):
+    """処理完了時の成功メッセージを統一"""
+    if source_type == "local":
+        st.success(f"✅ ローカルファイルの{process_type}が完了しました！")
+    elif source_type == "google_drive":
+        st.success(f"✅ Google Driveファイルの{process_type}が完了しました！")
+
+
+# ========================================
+# メインページ関数
+# ========================================
+
 def render_unified_invoice_processing_page():
     """統合請求書処理ページ - 本番アップロード＋OCRテスト"""
     st.markdown("# 📤 請求書処理")
@@ -238,20 +291,24 @@ def render_ocr_test_content():
                 st.error("ファイルを選択するかフォルダIDを入力してください")
             elif not st.session_state.is_ocr_testing:
                 # 統合OCRテスト実行（ローカル/Google Drive対応）
-                execute_unified_ocr_test_enhanced(
-                    files,
-                    source_type,
-                    file_metadata,
-                    selected_prompt_key,
-                    max_files,
-                    test_mode,
-                    include_validation
-                )
-                
-                # 下位互換性：従来のフォルダID指定がある場合
-                if not files and 'folder_id' in locals() and folder_id:
-                    execute_unified_ocr_test(
-                        folder_id,
+                if files:
+                    # 通常のファイル選択による処理
+                    execute_unified_ocr_test_enhanced(
+                        files,
+                        source_type,
+                        file_metadata,
+                        selected_prompt_key,
+                        max_files,
+                        test_mode,
+                        include_validation
+                    )
+                elif 'folder_id' in locals() and folder_id:
+                    # 手動フォルダID指定による処理（Google Drive用）
+                    gdrive_metadata = {'folder_id': folder_id, 'folder_name': 'Manual Input'}
+                    execute_unified_ocr_test_enhanced(
+                        [],
+                        "google_drive",
+                        gdrive_metadata,
                         selected_prompt_key,
                         max_files,
                         test_mode,
@@ -277,27 +334,24 @@ def execute_unified_upload_processing(files, prompt_key, include_validation, sav
         file_metadata = {}
     
     # 現在のユーザー情報取得
-    user_info = get_current_user()
-    user_id = user_info.get('email', 'test@example.com') if user_info else 'test@example.com'
+    user_id = _get_current_user_id()
     
     # 進捗コールバック関数
     def progress_callback(progress):
         logger.info(f"📊 アップロード進捗: {progress.step} ({progress.progress_percent}%) - {progress.message}")
     
     try:
-        # セッション状態から統一ワークフローエンジンを取得
-        if 'unified_engine' not in st.session_state:
-            st.error("❌ 統一ワークフローエンジンが初期化されていません")
+        # 統一ワークフローエンジンを取得
+        engine = _get_unified_engine()
+        if engine is None:
             return
-        
-        engine = st.session_state.unified_engine
         
         # 進捗コールバックを設定
         engine.progress_callback = progress_callback
         
         # ソースタイプに応じて処理分岐
         if source_type == "local":
-            st.info(f"💻 ローカルファイル {len(files)}件を本番データベースに保存します")
+            _display_processing_info(source_type, files, file_metadata, "本番アップロード")
             with st.spinner("統一ワークフローエンジンでローカルファイル処理中..."):
                 # ローカルファイル処理（既存のprocess_uploaded_files）
                 batch_result = engine.process_uploaded_files(
@@ -308,9 +362,8 @@ def execute_unified_upload_processing(files, prompt_key, include_validation, sav
         
         elif source_type == "google_drive":
             folder_id = file_metadata.get('folder_id', '')
-            folder_name = file_metadata.get('folder_name', 'Unknown Folder')
             max_files = file_metadata.get('max_files', len(files))
-            st.info(f"☁️ Google Drive「{folder_name}」から{len(files)}件を本番データベースに保存します")
+            _display_processing_info(source_type, files, file_metadata, "本番アップロード")
             with st.spinner("統一ワークフローエンジンでGoogle Driveファイル処理中..."):
                 # Google Driveファイル処理（既存のOCRテスト機能を本番アップロード用に流用）
                 batch_result = engine.process_upload_from_drive(
@@ -326,10 +379,7 @@ def execute_unified_upload_processing(files, prompt_key, include_validation, sav
         st.session_state.unified_processing_results = batch_result
         
         # 成功メッセージ（ソースタイプ別）
-        if source_type == "local":
-            st.success("✅ ローカルファイルの本番アップロード処理が完了しました！")
-        elif source_type == "google_drive":
-            st.success("✅ Google Driveファイルの本番アップロード処理が完了しました！")
+        _display_processing_success(source_type, "本番アップロード処理")
         
     except Exception as e:
         logger.error(f"統一アップロード処理エラー: {e}")
@@ -339,56 +389,6 @@ def execute_unified_upload_processing(files, prompt_key, include_validation, sav
         # 進捗状態をリセット
         st.session_state.upload_progress = []
 
-
-def execute_unified_ocr_test(folder_id, prompt_key, max_files, test_mode, include_validation):
-    """統一ワークフローによるOCRテスト実行（UnifiedWorkflowEngine版）"""
-    st.session_state.is_ocr_testing = True
-    st.session_state.ocr_test_results = []
-    
-    # 現在のユーザー情報取得
-    user_info = get_current_user()
-    user_id = user_info.get('email', 'test@example.com') if user_info else 'test@example.com'
-    
-    # 進捗コールバック関数
-    def progress_callback(progress):
-        logger.info(f"📊 OCRテスト進捗: {progress.step} ({progress.progress_percent}%) - {progress.message}")
-    
-    try:
-        with st.spinner("統一ワークフローエンジンでOCRテスト処理中..."):
-            # セッション状態から統一ワークフローエンジンを取得
-            if 'unified_engine' not in st.session_state:
-                st.error("❌ 統一ワークフローエンジンが初期化されていません")
-                return
-            
-            engine = st.session_state.unified_engine
-            
-            # 進捗コールバックを設定
-            engine.progress_callback = progress_callback
-
-            st.info(f"📊 Google Driveフォルダ(ID: {folder_id})内の最大{max_files if max_files !=-1 else '全'}件のPDFファイルでテストを開始します")
-            
-            # 統一エンジンに処理を移管
-            batch_result = engine.process_ocr_test_from_drive(
-                folder_id=folder_id,
-                user_id=user_id,
-                max_files=max_files
-            )
-            
-            # 結果をセッション状態に保存
-            st.session_state.ocr_test_results = batch_result
-            
-        st.success("✅ 統一OCRテストが完了しました！")
-        
-    except Exception as e:
-        logger.error(f"統一OCRテストエラー: {e}")
-        st.error(f"OCRテスト中にエラーが発生しました: {e}")
-        
-    finally:
-        st.session_state.is_ocr_testing = False
-        
-        # UI更新を強制実行して結果表示
-        if st.session_state.ocr_test_results:
-            st.rerun()
 
 
 def execute_unified_ocr_test_enhanced(files, source_type, file_metadata, prompt_key, max_files, test_mode, include_validation):
@@ -400,27 +400,23 @@ def execute_unified_ocr_test_enhanced(files, source_type, file_metadata, prompt_
     st.session_state.ocr_test_results = []
     
     # 現在のユーザー情報取得
-    user_info = get_current_user()
-    user_id = user_info.get('email', 'test@example.com') if user_info else 'test@example.com'
+    user_id = _get_current_user_id()
     
     # 進捗コールバック関数
-    def progress_callback(progress):
-        logger.info(f"📊 OCRテスト進捗: {progress.step} ({progress.progress_percent}%) - {progress.message}")
+    progress_callback = _create_progress_callback()
     
     try:
-        # セッション状態から統一ワークフローエンジンを取得
-        if 'unified_engine' not in st.session_state:
-            st.error("❌ 統一ワークフローエンジンが初期化されていません")
+        # 統一ワークフローエンジンを取得
+        engine = _get_unified_engine()
+        if engine is None:
             return
-        
-        engine = st.session_state.unified_engine
         
         # 進捗コールバックを設定
         engine.progress_callback = progress_callback
         
         # ソースタイプに応じて処理分岐
         if source_type == "local":
-            st.info(f"💻 ローカルファイル {len(files)}件でOCRテストを実行します")
+            _display_processing_info(source_type, files, file_metadata, "OCRテスト")
             with st.spinner("統一ワークフローエンジンでローカルファイルOCRテスト中..."):
                 # ローカルファイルOCRテスト処理
                 batch_result = engine.process_uploaded_files(
@@ -431,9 +427,8 @@ def execute_unified_ocr_test_enhanced(files, source_type, file_metadata, prompt_
         
         elif source_type == "google_drive":
             folder_id = file_metadata.get('folder_id', '')
-            folder_name = file_metadata.get('folder_name', 'Unknown Folder')
             max_files_actual = file_metadata.get('max_files', len(files))
-            st.info(f"☁️ Google Drive「{folder_name}」から{len(files)}件でOCRテストを実行します")
+            _display_processing_info(source_type, files, file_metadata, "OCRテスト")
             with st.spinner("統一ワークフローエンジンでGoogle DriveファイルOCRテスト中..."):
                 # Google DriveファイルOCRテスト処理（既存メソッド使用）
                 batch_result = engine.process_ocr_test_from_drive(
@@ -449,10 +444,7 @@ def execute_unified_ocr_test_enhanced(files, source_type, file_metadata, prompt_
         st.session_state.ocr_test_results = batch_result
         
         # 成功メッセージ（ソースタイプ別）
-        if source_type == "local":
-            st.success("✅ ローカルファイルのOCRテストが完了しました！")
-        elif source_type == "google_drive":
-            st.success("✅ Google DriveファイルのOCRテストが完了しました！")
+        _display_processing_success(source_type, "OCRテスト")
         
     except Exception as e:
         logger.error(f"統合OCRテストエラー: {e}")

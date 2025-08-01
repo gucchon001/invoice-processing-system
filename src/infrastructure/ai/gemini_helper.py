@@ -323,8 +323,7 @@ class GeminiAPIManager:
             return self.extract_invoice_data(pdf_content)
             
             # 強化版は後日再有効化予定
-            # from infrastructure.ai.invoice_matcher import get_invoice_matcher
-            # matcher_service = get_invoice_matcher()
+            
             # result = matcher_service.enhanced_invoice_extraction(pdf_content)
                 
         except Exception as e:
