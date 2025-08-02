@@ -287,7 +287,9 @@ def convert_db_data_to_preview_format(invoice_data: dict) -> dict:
             'validation_warnings': invoice_data.get('validation_warnings') or [],  # NULL → []
             'completeness_score': invoice_data.get('completeness_score', 0),
             'file_path': invoice_data.get('file_path', ''),
-            'google_drive_id': invoice_data.get('google_drive_id'),
+            'google_drive_id': invoice_data.get('gdrive_file_id') or invoice_data.get('google_drive_id'),  # 修正
+            'source_type': invoice_data.get('source_type', 'local'),
+            'file_size': invoice_data.get('file_size'),
         }
         
         return result
@@ -524,24 +526,80 @@ def render_pdf_preview_dashboard(result: dict, filename: str):
     
     file_path = result.get('file_path', '')
     google_drive_id = result.get('google_drive_id')
+    source_type = result.get('source_type', 'local')
+    file_size = result.get('file_size')
     
+    # ファイル基本情報
     st.info(f"📄 ファイル名: {filename}")
     
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write(f"📁 ソース: {source_type}")
+        if file_size:
+            st.write(f"📊 ファイルサイズ: {file_size} bytes")
+    
+    with col2:
+        if google_drive_id:
+            st.write(f"🆔 Google Drive ID: {google_drive_id[:20]}...")
+        if file_path:
+            st.write(f"📂 パス: {file_path}")
+    
+    st.divider()
+    
+    # PDFプレビュー・アクション
     if google_drive_id:
-        st.write(f"📁 Google Drive ID: {google_drive_id}")
+        st.markdown("### 📋 Google Drive PDFアクション")
         
-        # Google Driveからの表示は将来実装
-        st.warning("🚧 Google Drive PDFプレビューは今後実装予定です")
+        col1, col2, col3 = st.columns(3)
         
-        # ダウンロードリンク（将来実装）
-        # st.markdown(f"[📥 ダウンロード](https://drive.google.com/file/d/{google_drive_id}/view)")
+        with col1:
+            # Google Driveビューアリンク
+            viewer_url = f"https://drive.google.com/file/d/{google_drive_id}/view"
+            st.markdown(f"[👁️ Google Driveで表示]({viewer_url})")
+        
+        with col2:
+            # ダウンロードリンク
+            download_url = f"https://drive.google.com/uc?export=download&id={google_drive_id}"
+            st.markdown(f"[📥 ダウンロード]({download_url})")
+        
+        with col3:
+            # プレビューリンク（新しいタブ）
+            preview_url = f"https://drive.google.com/file/d/{google_drive_id}/preview"
+            st.markdown(f"[🔍 プレビュー]({preview_url})")
+        
+        # 埋め込みプレビュー（実験的）
+        with st.expander("🔬 実験的プレビュー（埋め込み）", expanded=False):
+            st.warning("⚠️ Google Drive の権限設定によっては表示されない場合があります")
+            
+            # iframe埋め込み
+            iframe_url = f"https://drive.google.com/file/d/{google_drive_id}/preview"
+            st.components.v1.iframe(iframe_url, height=600, scrolling=True)
     
     elif file_path:
-        st.write(f"📁 ファイルパス: {file_path}")
-        st.warning("🚧 ローカルPDFプレビューは今後実装予定です")
+        st.markdown("### 📂 ローカルファイル情報")
+        st.code(file_path)
+        st.info("🚧 ローカルファイルのプレビューは今後実装予定です")
+        
+        # ローカルファイル用の将来実装予定機能
+        with st.expander("🔮 将来実装予定機能", expanded=False):
+            st.write("- Base64エンコードによるPDF埋め込み")
+            st.write("- ファイルダウンロード機能")
+            st.write("- 画像変換プレビュー")
     
     else:
         st.warning("📄 PDFファイル情報が見つかりません")
+        st.info("💡 ファイルが Google Drive または ローカルに保存されていない可能性があります")
+        
+        # デバッグ情報
+        with st.expander("🔍 デバッグ情報", expanded=False):
+            st.write("**result内容:**")
+            debug_info = {
+                'file_path': file_path,
+                'google_drive_id': google_drive_id,
+                'source_type': source_type,
+                'file_size': file_size
+            }
+            st.json(debug_info)
 
 
 def render_settings_page():
