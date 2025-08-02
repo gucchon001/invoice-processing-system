@@ -278,13 +278,13 @@ def convert_db_data_to_preview_format(invoice_data: dict) -> dict:
                 if key not in enhanced_extracted_data or not enhanced_extracted_data[key]:
                     enhanced_extracted_data[key] = value
         
-        # 結果フォーマット
+        # 結果フォーマット（NULL値を安全に処理）
         result = {
             'extracted_data': enhanced_extracted_data,
             'raw_response': invoice_data.get('raw_response', {}),
             'processing_time': invoice_data.get('processing_time'),
-            'validation_errors': invoice_data.get('validation_errors', []),
-            'validation_warnings': invoice_data.get('validation_warnings', []),
+            'validation_errors': invoice_data.get('validation_errors') or [],  # NULL → []
+            'validation_warnings': invoice_data.get('validation_warnings') or [],  # NULL → []
             'completeness_score': invoice_data.get('completeness_score', 0),
             'file_path': invoice_data.get('file_path', ''),
             'google_drive_id': invoice_data.get('google_drive_id'),
@@ -387,7 +387,13 @@ def render_line_items_dashboard(extracted_data: dict):
     st.markdown("### 📊 請求明細")
     
     line_items = extracted_data.get('line_items', [])
-    if line_items and isinstance(line_items, list):
+    # NULL値の安全な処理
+    if line_items is None:
+        line_items = []
+    elif not isinstance(line_items, list):
+        line_items = []
+    
+    if line_items:
         st.write(f"📋 明細数: {len(line_items)}件")
         
         # 明細データをDataFrameで表示
@@ -487,6 +493,12 @@ def render_json_preview_dashboard(result: dict, extracted_data: dict):
         
         with col1:
             validation_errors = result.get('validation_errors', [])
+            # NULL値の安全な処理
+            if validation_errors is None:
+                validation_errors = []
+            elif not isinstance(validation_errors, list):
+                validation_errors = []
+            
             st.write(f"**🚨 エラー**: {len(validation_errors)}件")
             if validation_errors:
                 for i, error in enumerate(validation_errors, 1):
@@ -494,6 +506,12 @@ def render_json_preview_dashboard(result: dict, extracted_data: dict):
         
         with col2:
             validation_warnings = result.get('validation_warnings', [])
+            # NULL値の安全な処理
+            if validation_warnings is None:
+                validation_warnings = []
+            elif not isinstance(validation_warnings, list):
+                validation_warnings = []
+            
             st.write(f"**⚠️ 警告**: {len(validation_warnings)}件")
             if validation_warnings:
                 for i, warning in enumerate(validation_warnings, 1):
