@@ -118,10 +118,38 @@ def render_invoice_aggrid(invoices_data):
         
         # データ更新の処理
         updated_data = response['data']
-        if updated_data is not None and not updated_data.equals(df):
-            st.info("データが更新されました")
-            # データベースに保存
-            update_invoices_in_database(updated_data)
+        if updated_data is not None:
+            try:
+                # DataFrameの比較を安全に行う
+                is_data_changed = False
+                if isinstance(updated_data, pd.DataFrame) and isinstance(df, pd.DataFrame):
+                    # 同じ形状でない場合は変更ありとみなす
+                    if updated_data.shape != df.shape:
+                        is_data_changed = True
+                    else:
+                        # 内容を比較（equals()の結果をall()で集約）
+                        try:
+                            comparison_result = updated_data.equals(df)
+                            if isinstance(comparison_result, bool):
+                                is_data_changed = not comparison_result
+                            else:
+                                # equals()がSeriesやDataFrameを返す場合
+                                is_data_changed = not comparison_result.all()
+                        except Exception:
+                            # 比較に失敗した場合は変更ありとみなす
+                            is_data_changed = True
+                else:
+                    # DataFrameでない場合も変更ありとみなす
+                    is_data_changed = True
+                
+                if is_data_changed:
+                    st.info("データが更新されました")
+                    # データベースに保存
+                    update_invoices_in_database(updated_data)
+                    
+            except Exception as e:
+                logger.error(f"データ更新チェックエラー: {e}")
+                # エラーが発生した場合は更新処理をスキップ
             
     except Exception as e:
         logger.error(f"ag-grid表示エラー: {e}")
