@@ -421,7 +421,8 @@ def render_pdf_preview_dashboard_stable(result: dict, filename: str):
     # データベースから取得した一意のIDを使用（安定したキー）
     original_invoice_data = result.get('_original_invoice_data', {})
     invoice_id = original_invoice_data.get('id', 'unknown')
-    google_drive_id = result.get('google_drive_id')
+    # 🔧 修正: 正しいGoogle Drive ID取得（gdrive_file_idフィールドから）
+    google_drive_id = result.get('google_drive_id') or original_invoice_data.get('gdrive_file_id')
     source_type = result.get('source_type', 'local')
     
     # ファイル情報表示
