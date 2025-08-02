@@ -328,9 +328,34 @@ def convert_db_data_to_preview_format(invoice_data: dict) -> dict:
 def render_enhanced_result_tabs_dashboard(result: dict, filename: str):
     """ダッシュボード用詳細プレビュー（既存高機能モジュール再利用）"""
     
-    # 🎯 既存の高機能プレビューを直接使用（保守性・一貫性向上）
-    from .invoice_processing import render_enhanced_result_tabs
-    render_enhanced_result_tabs(result, filename)
+    # 🔧 ダッシュボード用の安定したキーでタブ表示
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 基本情報", "📊 明細", "🆕 新機能", "🔍 JSON", "📄 PDF"])
+    
+    extracted_data = result.get('extracted_data', {})
+    
+    with tab1:
+        # 既存の基本情報表示を使用
+        from .invoice_processing import render_basic_info_enhanced
+        render_basic_info_enhanced(extracted_data)
+    
+    with tab2:
+        # 既存の明細表示を使用
+        from .invoice_processing import render_line_items_enhanced
+        render_line_items_enhanced(extracted_data)
+    
+    with tab3:
+        # 既存の新機能表示を使用
+        from .invoice_processing import render_new_features_enhanced
+        render_new_features_enhanced(extracted_data, result)
+    
+    with tab4:
+        # 既存のJSON表示を使用
+        from .invoice_processing import render_json_preview_enhanced
+        render_json_preview_enhanced(result, extracted_data)
+    
+    with tab5:
+        # 🎯 ダッシュボード専用PDFプレビュー（安定したキー使用）
+        render_pdf_preview_dashboard_stable(result, filename)
 
 
 def update_invoices_in_database(updated_data):
@@ -385,6 +410,120 @@ def update_invoices_in_database(updated_data):
 
 
 # 🗑️ 削除: render_pdf_preview_dashboard -> invoice_processing.render_pdf_preview_enhanced に統一
+
+
+def render_pdf_preview_dashboard_stable(result: dict, filename: str):
+    """ダッシュボード専用PDFプレビュー（安定したキー使用でUI問題解決）"""
+    from src.infrastructure.storage.google_drive_helper import get_google_drive
+    
+    st.markdown("**📄 PDF原本プレビュー**")
+    
+    # データベースから取得した一意のIDを使用（安定したキー）
+    original_invoice_data = result.get('_original_invoice_data', {})
+    invoice_id = original_invoice_data.get('id', 'unknown')
+    google_drive_id = result.get('google_drive_id')
+    source_type = result.get('source_type', 'local')
+    
+    # ファイル情報表示
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write(f"**ファイル名**: {filename}")
+        file_size = result.get('file_size')
+        if file_size:
+            st.write(f"**ファイルサイズ**: {file_size:,} bytes")
+    with col2:
+        if google_drive_id:
+            st.write(f"**Google Drive ID**: {google_drive_id[:20]}...")
+        st.write(f"**ソース**: {source_type}")
+    
+    if google_drive_id:
+        # 🔧 安定したキーを使用（データベースIDベース）
+        stable_key = f"dashboard_pdf_{invoice_id}_{google_drive_id[:10]}"
+        
+        if st.button(f"📄 {filename} を表示", key=stable_key):
+            try:
+                # Google Driveからファイル取得を試行
+                with st.spinner("PDFを読み込み中..."):
+                    google_drive = get_google_drive()
+                    
+                    if google_drive:
+                        # ファイルをダウンロード
+                        pdf_content = google_drive.download_file(google_drive_id)
+                        
+                        if pdf_content:
+                            # ダウンロードボタン
+                            st.download_button(
+                                label="📥 PDFをダウンロード",
+                                data=pdf_content,
+                                file_name=filename,
+                                mime="application/pdf",
+                                key=f"download_{stable_key}"
+                            )
+                            
+                            # PDFビューアー
+                            import base64
+                            base64_pdf = base64.b64encode(pdf_content).decode('utf-8')
+                            pdf_display = f'''
+                            <div style="border: 1px solid #ccc; border-radius: 5px; margin: 10px 0;">
+                                <iframe 
+                                    src="data:application/pdf;base64,{base64_pdf}" 
+                                    width="100%" 
+                                    height="600px" 
+                                    style="border: none;">
+                                    <p>PDFを表示できません。ダウンロードしてご確認ください。</p>
+                                </iframe>
+                            </div>
+                            '''
+                            st.markdown(pdf_display, unsafe_allow_html=True)
+                            st.success("✅ PDF表示完了")
+                        else:
+                            st.error("📥 PDFファイルの取得に失敗しました")
+                    else:
+                        st.error("🔧 Google Drive APIサービスが利用できません")
+                        
+            except Exception as e:
+                st.error(f"PDF表示エラー: {str(e)}")
+                logger.error(f"PDF表示エラー: {e}")
+        
+        # 代替アクションボタン
+        st.markdown("### 📋 その他のアクション")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            # Google Driveビューアリンク
+            viewer_url = f"https://drive.google.com/file/d/{google_drive_id}/view"
+            st.markdown(f"[👁️ Google Driveで表示]({viewer_url})")
+        
+        with col2:
+            # ダウンロードリンク
+            download_url = f"https://drive.google.com/uc?export=download&id={google_drive_id}"
+            st.markdown(f"[📥 ダウンロード]({download_url})")
+        
+        with col3:
+            # プレビューリンク
+            preview_url = f"https://drive.google.com/file/d/{google_drive_id}/preview"
+            st.markdown(f"[🔍 プレビュー]({preview_url})")
+    
+    else:
+        # Google Drive IDがない場合
+        st.warning("📄 PDFファイル情報が見つかりません")
+        if source_type == 'gdrive':
+            st.info("💡 データベースにGoogle Drive IDが保存されていない可能性があります")
+        elif source_type == 'local':
+            file_path = result.get('file_path', '')
+            if file_path:
+                st.write(f"📂 ファイルパス: {file_path}")
+                st.info("🚧 ローカルPDFプレビューは今後実装予定です")
+        
+        # デバッグ情報
+        with st.expander("🔍 デバッグ情報", expanded=False):
+            debug_info = {
+                'invoice_id': invoice_id,
+                'google_drive_id': google_drive_id,
+                'source_type': source_type,
+                'stable_key': f"dashboard_pdf_{invoice_id}_{google_drive_id[:10] if google_drive_id else 'none'}"
+            }
+            st.json(debug_info)
 
 
 def render_settings_page():
