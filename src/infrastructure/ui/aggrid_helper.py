@@ -281,6 +281,57 @@ class AgGridManager:
             allow_unsafe_jscode=True
         )
     
+    def display_invoice_grid(self, data: pd.DataFrame) -> AgGrid:
+        """請求書データ表示用のag-gridを作成（ダッシュボード用）"""
+        
+        gb = GridOptionsBuilder.from_dataframe(data)
+        
+        # 基本設定の適用
+        gb.configure_default_column(
+            resizable=True,
+            sortable=True,
+            filterable=True,
+            flex=1,
+            minWidth=100,
+            editable=True  # 編集可能
+        )
+        
+        # 主要カラムの設定
+        gb.configure_column('id', editable=False, width=80, pinned='left')
+        gb.configure_column('user_email', editable=False, width=180)
+        gb.configure_column('status', editable=True, width=100)
+        gb.configure_column('file_name', editable=False, width=150)
+        gb.configure_column('uploaded_at', editable=False, width=130, filter='agDateColumnFilter')
+        gb.configure_column('issuer_name', editable=True, width=180)
+        gb.configure_column('total_amount_tax_included', 
+                          editable=True,
+                          type=['numericColumn', 'numberColumnFilter'],
+                          valueFormatter="x.toLocaleString()",
+                          width=150)
+        
+        # 複数選択設定
+        gb.configure_selection('multiple', use_checkbox=True)
+        
+        # ページネーション設定
+        gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=20)
+        
+        # サイドバー設定
+        gb.configure_side_bar()
+        
+        grid_options = gb.build()
+        
+        return AgGrid(
+            data,
+            gridOptions=grid_options,
+            data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+            update_mode=GridUpdateMode.MODEL_CHANGED,
+            fit_columns_on_grid_load=False,
+            enable_enterprise_modules=False,
+            height=500,
+            theme='streamlit',
+            reload_data=False
+        )
+
     def create_data_grid(self, data: pd.DataFrame, 
                         editable: bool = False,
                         fit_columns_on_grid_load: bool = True,

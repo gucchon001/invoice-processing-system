@@ -24,13 +24,13 @@ except ImportError as e:
 def render_sidebar(user_info):
     """サイドバーをレンダリング"""
     with st.sidebar:
-        # ユーザー情報表示
-        render_user_info(user_info)
+        # メニュー表示（ユーザー情報の前に）
+        selected_menu = render_menu()
         
         st.divider()
         
-        # メニュー表示
-        selected_menu = render_menu()
+        # ユーザー情報表示
+        render_user_info(user_info)
         
         return selected_menu
 
@@ -54,13 +54,14 @@ def render_user_info(user_info):
 def render_menu():
     """メニューセクション"""
     st.markdown("### 📋 メニュー")
+    st.markdown("機能を選択してください")
     
     # メニューオプション定義
     menu_options = get_menu_options()
     
-    # メニュー選択
-    selected_menu = st.selectbox(
-        "機能を選択してください",
+    # メニュー選択（ラジオボタン）
+    selected_menu = st.radio(
+        "",  # ラベルを空にして、上で表示
         menu_options,
         key="main_menu"
     )
