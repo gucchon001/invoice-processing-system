@@ -441,7 +441,28 @@ def render_pdf_preview_dashboard_stable(result: dict, filename: str):
         # 🔧 安定したキーを使用（データベースIDベース）
         stable_key = f"dashboard_pdf_{invoice_id}_{google_drive_id[:10]}"
         
-        if st.button(f"📄 {filename} を表示", key=stable_key):
+        # 🔧 セッション状態でPDF表示を管理（画面戻り問題解決）
+        pdf_state_key = f"pdf_display_{stable_key}"
+        
+        # PDF表示状態の初期化
+        if pdf_state_key not in st.session_state:
+            st.session_state[pdf_state_key] = False
+        
+        # PDF表示ボタンと閉じるボタンを横並び
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            if st.button(f"📄 {filename} を表示", key=stable_key):
+                st.session_state[pdf_state_key] = True
+        
+        with col2:
+            if st.session_state[pdf_state_key]:
+                if st.button("❌ 閉じる", key=f"close_{stable_key}"):
+                    st.session_state[pdf_state_key] = False
+                    st.rerun()
+        
+        # PDF表示エリア（セッション状態に基づく）
+        if st.session_state[pdf_state_key]:
             try:
                 # Google Driveからファイル取得を試行
                 with st.spinner("PDFを読み込み中..."):
@@ -479,12 +500,15 @@ def render_pdf_preview_dashboard_stable(result: dict, filename: str):
                             st.success("✅ PDF表示完了")
                         else:
                             st.error("📥 PDFファイルの取得に失敗しました")
+                            st.session_state[pdf_state_key] = False  # エラー時は状態リセット
                     else:
                         st.error("🔧 Google Drive APIサービスが利用できません")
+                        st.session_state[pdf_state_key] = False  # エラー時は状態リセット
                         
             except Exception as e:
                 st.error(f"PDF表示エラー: {str(e)}")
                 logger.error(f"PDF表示エラー: {e}")
+                st.session_state[pdf_state_key] = False  # エラー時は状態リセット
         
         # 代替アクションボタン
         st.markdown("### 📋 その他のアクション")
