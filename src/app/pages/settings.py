@@ -201,6 +201,20 @@ def render_invoice_detail_preview(invoice_data: dict):
             for field in debug_fields:
                 value = invoice_data.get(field, 'NOT_FOUND')
                 st.write(f"- {field}: {value}")
+            
+            # Google Drive 関連の詳細デバッグ
+            st.write("**📁 Google Drive & ファイル関連:**")
+            gdrive_fields = ['gdrive_file_id', 'google_drive_id', 'source_type', 'file_path', 
+                           'file_name', 'file_size', 'file_metadata']
+            gdrive_debug = {}
+            for field in gdrive_fields:
+                value = invoice_data.get(field)
+                gdrive_debug[field] = value
+                st.write(f"- {field}: {value}")
+            
+            # 全フィールド確認（長いので折りたたみ）
+            with st.expander("📋 全フィールド一覧", expanded=False):
+                st.json(invoice_data)
         
         # データベースから取得したデータを詳細プレビュー用に変換
         result = convert_db_data_to_preview_format(invoice_data)
@@ -278,6 +292,17 @@ def convert_db_data_to_preview_format(invoice_data: dict) -> dict:
                 if key not in enhanced_extracted_data or not enhanced_extracted_data[key]:
                     enhanced_extracted_data[key] = value
         
+        # Google Drive ID のデバッグ情報
+        gdrive_file_id_raw = invoice_data.get('gdrive_file_id')
+        google_drive_id_raw = invoice_data.get('google_drive_id')
+        final_google_drive_id = gdrive_file_id_raw or google_drive_id_raw
+        
+        logger.info(f"🔍 DEBUG - Google Drive ID変換:")
+        logger.info(f"  - gdrive_file_id (raw): {gdrive_file_id_raw}")
+        logger.info(f"  - google_drive_id (raw): {google_drive_id_raw}")
+        logger.info(f"  - final_google_drive_id: {final_google_drive_id}")
+        logger.info(f"  - source_type: {invoice_data.get('source_type')}")
+        
         # 結果フォーマット（NULL値を安全に処理）
         result = {
             'extracted_data': enhanced_extracted_data,
@@ -287,7 +312,7 @@ def convert_db_data_to_preview_format(invoice_data: dict) -> dict:
             'validation_warnings': invoice_data.get('validation_warnings') or [],  # NULL → []
             'completeness_score': invoice_data.get('completeness_score', 0),
             'file_path': invoice_data.get('file_path', ''),
-            'google_drive_id': invoice_data.get('gdrive_file_id') or invoice_data.get('google_drive_id'),  # 修正
+            'google_drive_id': final_google_drive_id,  # デバッグ済み
             'source_type': invoice_data.get('source_type', 'local'),
             'file_size': invoice_data.get('file_size'),
         }
@@ -329,21 +354,40 @@ def render_enhanced_result_tabs_dashboard(result: dict, filename: str):
 def update_invoices_in_database(updated_data):
     """更新されたデータをデータベースに保存"""
     try:
+        import math
         database = get_database()
         
         # データフレームから辞書リストに変換
         records = updated_data.to_dict('records')
         
         for record in records:
-            invoice_id = record.get('id')
+            # JSON準拠のためfloat値をサニタイズ
+            sanitized_record = {}
+            for key, value in record.items():
+                if isinstance(value, float):
+                    # NaN, Infinity, -Infinityを安全な値に変換
+                    if math.isnan(value):
+                        sanitized_record[key] = None  # NaN → NULL
+                    elif math.isinf(value):
+                        sanitized_record[key] = None  # Infinity → NULL
+                    else:
+                        sanitized_record[key] = value
+                else:
+                    sanitized_record[key] = value
+            
+            invoice_id = sanitized_record.get('id')
             if invoice_id:
-                database.update_invoice(invoice_id, record)
+                database.update_invoice(invoice_id, sanitized_record)
         
         st.success("✅ データの更新が完了しました")
         
     except Exception as e:
         logger.error(f"データ更新エラー: {e}")
         st.error(f"データ更新中にエラーが発生しました: {e}")
+        
+        # デバッグ情報
+        logger.debug(f"更新対象データ形状: {updated_data.shape if hasattr(updated_data, 'shape') else 'N/A'}")
+        logger.debug(f"更新対象データ型: {type(updated_data)}")
 
 
 def render_basic_info_dashboard(extracted_data: dict):
