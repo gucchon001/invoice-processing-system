@@ -514,15 +514,28 @@ def render_pdf_preview_dashboard_stable(result: dict, filename: str):
             st.markdown("### 🧪 テスト用アクション")
             st.caption("⚠️ Google Drive IDが不足していますが、修正効果確認のためテスト表示")
             
-            # テスト用の安定したキー
-            test_stable_key = f"test_dashboard_pdf_{invoice_id}"
+            # テスト用の安定したキー（現在時刻を含めずにセッション固定）
+            test_stable_key = f"test_pdf_button_invoice_{invoice_id}_static"
+            
+            # セッション状態を使用して画面戻りを防ぐ
+            if f"test_clicked_{invoice_id}" not in st.session_state:
+                st.session_state[f"test_clicked_{invoice_id}"] = False
             
             if st.button("🧪 テスト: PDF表示ボタン (Google Drive ID不足)", key=test_stable_key):
+                st.session_state[f"test_clicked_{invoice_id}"] = True
+                
+            if st.session_state[f"test_clicked_{invoice_id}"]:
                 st.error("❌ Google Drive IDが不足しているため、実際のPDF表示はできません")
                 st.info("📋 修正効果確認:")
                 st.write("✅ ボタンクリック時に画面が戻らない")
-                st.write("✅ 安定したキーでUI状態維持")
+                st.write("✅ 安定したキーでUI状態維持")  
+                st.write("✅ セッション状態で表示維持")
                 st.write("❌ Google Drive IDが必要（新規処理でテストしてください）")
+                
+                # リセットボタン
+                if st.button("🔄 テストリセット", key=f"reset_test_{invoice_id}"):
+                    st.session_state[f"test_clicked_{invoice_id}"] = False
+                    st.rerun()
                 
                 # 修正内容の説明
                 with st.expander("🔧 修正内容", expanded=True):
