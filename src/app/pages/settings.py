@@ -90,22 +90,36 @@ def render_invoice_aggrid(invoices_data):
         
         # 選択された行の処理
         selected_rows = response['selected_rows']
-        if selected_rows:
+        
+        # selected_rowsをリスト形式に正規化（DataFrameエラー回避）
+        normalized_selected_rows = []
+        if selected_rows is not None:
+            if isinstance(selected_rows, pd.DataFrame):
+                if not selected_rows.empty:
+                    normalized_selected_rows = selected_rows.to_dict('records')
+            elif isinstance(selected_rows, list):
+                normalized_selected_rows = selected_rows
+            else:
+                # その他の型の場合は空リストにフォールバック
+                logger.warning(f"予期しないselected_rows型: {type(selected_rows)}")
+                normalized_selected_rows = []
+        
+        if normalized_selected_rows:
             st.subheader("📝 選択されたデータ")
             
             # 複数選択時は基本表示のみ
-            if len(selected_rows) > 1:
-                st.info(f"📋 {len(selected_rows)}件のデータが選択されています")
-                selected_df = pd.DataFrame(selected_rows)
+            if len(normalized_selected_rows) > 1:
+                st.info(f"📋 {len(normalized_selected_rows)}件のデータが選択されています")
+                selected_df = pd.DataFrame(normalized_selected_rows)
                 st.dataframe(selected_df, use_container_width=True)
                 
                 # 削除ボタン
                 if st.button("🗑️ 選択行を削除", type="secondary"):
-                    delete_selected_invoices(selected_rows)
+                    delete_selected_invoices(normalized_selected_rows)
             
             # 1件選択時は詳細プレビュー表示
-            elif len(selected_rows) == 1:
-                selected_data = selected_rows[0]
+            elif len(normalized_selected_rows) == 1:
+                selected_data = normalized_selected_rows[0]
                 render_invoice_detail_preview(selected_data)
                 
                 st.divider()
@@ -114,7 +128,7 @@ def render_invoice_aggrid(invoices_data):
                 col1, col2, col3 = st.columns([1, 1, 1])
                 with col2:
                     if st.button("🗑️ 選択行を削除", type="secondary", use_container_width=True):
-                        delete_selected_invoices(selected_rows)
+                        delete_selected_invoices(normalized_selected_rows)
         
         # データ更新の処理
         updated_data = response['data']
