@@ -315,6 +315,7 @@ def convert_db_data_to_preview_format(invoice_data: dict) -> dict:
             'google_drive_id': final_google_drive_id,  # デバッグ済み
             'source_type': invoice_data.get('source_type', 'local'),
             'file_size': invoice_data.get('file_size'),
+            '_original_invoice_data': invoice_data,  # 🔧 元データを保持（デバッグ・既存機能再利用用）
         }
         
         return result
@@ -565,85 +566,67 @@ def render_json_preview_dashboard(result: dict, extracted_data: dict):
 
 
 def render_pdf_preview_dashboard(result: dict, filename: str):
-    """PDFタブの表示（ダッシュボード用）"""
-    st.markdown("### 📄 PDFファイル")
+    """PDFタブの表示（ダッシュボード用） - 既存モジュール再利用"""
     
-    file_path = result.get('file_path', '')
+    # 🔧 データベースデータを既存の file_info フォーマットに変換
+    original_invoice_data = result.get('_original_invoice_data', {})
     google_drive_id = result.get('google_drive_id')
     source_type = result.get('source_type', 'local')
-    file_size = result.get('file_size')
     
-    # ファイル基本情報
-    st.info(f"📄 ファイル名: {filename}")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write(f"📁 ソース: {source_type}")
-        if file_size:
-            st.write(f"📊 ファイルサイズ: {file_size} bytes")
-    
-    with col2:
-        if google_drive_id:
-            st.write(f"🆔 Google Drive ID: {google_drive_id[:20]}...")
-        if file_path:
-            st.write(f"📂 パス: {file_path}")
-    
-    st.divider()
-    
-    # PDFプレビュー・アクション
+    # 既存のrender_pdf_preview_enhanced用にfile_infoを構築
     if google_drive_id:
-        st.markdown("### 📋 Google Drive PDFアクション")
+        # Google Drive IDが取得できている場合は既存機能を使用
+        file_info = {
+            'file_id': google_drive_id,
+            'file_size': result.get('file_size') or original_invoice_data.get('file_size')
+        }
+        result_for_enhanced = {
+            'file_info': file_info,
+            **result
+        }
         
-        col1, col2, col3 = st.columns(3)
+        # 🎯 既存の高機能PDFプレビューを使用
+        from .invoice_processing import render_pdf_preview_enhanced
+        render_pdf_preview_enhanced(result_for_enhanced, filename)
         
-        with col1:
-            # Google Driveビューアリンク
-            viewer_url = f"https://drive.google.com/file/d/{google_drive_id}/view"
-            st.markdown(f"[👁️ Google Driveで表示]({viewer_url})")
-        
-        with col2:
-            # ダウンロードリンク
-            download_url = f"https://drive.google.com/uc?export=download&id={google_drive_id}"
-            st.markdown(f"[📥 ダウンロード]({download_url})")
-        
-        with col3:
-            # プレビューリンク（新しいタブ）
-            preview_url = f"https://drive.google.com/file/d/{google_drive_id}/preview"
-            st.markdown(f"[🔍 プレビュー]({preview_url})")
-        
-        # 埋め込みプレビュー（実験的）
-        with st.expander("🔬 実験的プレビュー（埋め込み）", expanded=False):
-            st.warning("⚠️ Google Drive の権限設定によっては表示されない場合があります")
-            
-            # iframe埋め込み
-            iframe_url = f"https://drive.google.com/file/d/{google_drive_id}/preview"
-            st.components.v1.iframe(iframe_url, height=600, scrolling=True)
-    
-    elif file_path:
-        st.markdown("### 📂 ローカルファイル情報")
-        st.code(file_path)
-        st.info("🚧 ローカルファイルのプレビューは今後実装予定です")
-        
-        # ローカルファイル用の将来実装予定機能
-        with st.expander("🔮 将来実装予定機能", expanded=False):
-            st.write("- Base64エンコードによるPDF埋め込み")
-            st.write("- ファイルダウンロード機能")
-            st.write("- 画像変換プレビュー")
-    
     else:
-        st.warning("📄 PDFファイル情報が見つかりません")
-        st.info("💡 ファイルが Google Drive または ローカルに保存されていない可能性があります")
+        # Google Drive IDがない場合は従来のダッシュボード表示
+        st.markdown("### 📄 PDFファイル")
+        st.info(f"📄 ファイル名: {filename}")
+        st.write(f"📁 ソース: {source_type}")
         
-        # デバッグ情報
-        with st.expander("🔍 デバッグ情報", expanded=False):
-            st.write("**result内容:**")
-            debug_info = {
-                'file_path': file_path,
-                'google_drive_id': google_drive_id,
-                'source_type': source_type,
-                'file_size': file_size
-            }
-            st.json(debug_info)
+        if source_type == 'gdrive':
+            st.warning("📄 Google Drive PDFファイル情報が見つかりません")
+            st.info("💡 データベースにGoogle Drive IDが保存されていない可能性があります")
+            
+            # データベース調査のための情報
+            with st.expander("🔍 データベース調査情報", expanded=False):
+                st.write("**問題の可能性:**")
+                st.write("1. 処理時にGoogle Drive IDがデータベースに保存されていない")
+                st.write("2. `gdrive_file_id` カラムへの値挿入に問題がある")
+                st.write("3. データベース取得クエリに問題がある")
+                
+                st.write("**確認すべきデータ:**")
+                debug_info = {
+                    'google_drive_id': google_drive_id,
+                    'source_type': source_type,
+                    'original_data_keys': list(original_invoice_data.keys()) if original_invoice_data else [],
+                    'gdrive_file_id_raw': original_invoice_data.get('gdrive_file_id') if original_invoice_data else None,
+                    'file_path': result.get('file_path')
+                }
+                st.json(debug_info)
+                
+        elif source_type == 'local':
+            file_path = result.get('file_path', '')
+            if file_path:
+                st.write(f"📂 ファイルパス: {file_path}")
+                st.info("🚧 ローカルPDFプレビューは今後実装予定です")
+            else:
+                st.warning("📄 ローカルファイル情報が見つかりません")
+        
+        else:
+            st.warning("📄 PDFファイル情報が見つかりません")
+            st.info("💡 ファイルソースが不明または未対応の形式です")
 
 
 def render_settings_page():

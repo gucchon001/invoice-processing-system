@@ -365,7 +365,7 @@ class DatabaseManager:
                 
                 # 📁 ファイル管理（7カラム） - 🆕 新機能4カラム追加
                 'file_name': invoice_data.get('file_name', ''),
-                'gdrive_file_id': invoice_data.get('file_id', ''),    # Google Drive ID
+                'gdrive_file_id': invoice_data.get('gdrive_file_id', ''),    # 🔧 修正: 正しいキー名
                 'file_path': invoice_data.get('file_path', ''),       # ファイルパス
                 'source_type': invoice_data.get('source_type', 'local'),  # 🆕 ファイルソース
                 'gmail_message_id': invoice_data.get('gmail_message_id'),  # 🆕 Gmailメッセージ
