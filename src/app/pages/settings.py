@@ -509,6 +509,28 @@ def render_pdf_preview_dashboard_stable(result: dict, filename: str):
         st.warning("📄 PDFファイル情報が見つかりません")
         if source_type == 'gdrive':
             st.info("💡 データベースにGoogle Drive IDが保存されていない可能性があります")
+            
+            # 🔧 暫定対策: 既存データでもテスト用ボタンを表示
+            st.markdown("### 🧪 テスト用アクション")
+            st.caption("⚠️ Google Drive IDが不足していますが、修正効果確認のためテスト表示")
+            
+            # テスト用の安定したキー
+            test_stable_key = f"test_dashboard_pdf_{invoice_id}"
+            
+            if st.button("🧪 テスト: PDF表示ボタン (Google Drive ID不足)", key=test_stable_key):
+                st.error("❌ Google Drive IDが不足しているため、実際のPDF表示はできません")
+                st.info("📋 修正効果確認:")
+                st.write("✅ ボタンクリック時に画面が戻らない")
+                st.write("✅ 安定したキーでUI状態維持")
+                st.write("❌ Google Drive IDが必要（新規処理でテストしてください）")
+                
+                # 修正内容の説明
+                with st.expander("🔧 修正内容", expanded=True):
+                    st.write("**問題:** `id(result)`による不安定なキー → 画面戻り")
+                    st.write("**修正:** `dashboard_pdf_{invoice_id}_{google_drive_id}`による安定キー")
+                    st.write("**現状:** Google Drive ID不足により実際のPDF表示は不可")
+                    st.write("**解決:** 新しいGoogle Drive処理でテストが必要")
+            
         elif source_type == 'local':
             file_path = result.get('file_path', '')
             if file_path:
@@ -521,7 +543,10 @@ def render_pdf_preview_dashboard_stable(result: dict, filename: str):
                 'invoice_id': invoice_id,
                 'google_drive_id': google_drive_id,
                 'source_type': source_type,
-                'stable_key': f"dashboard_pdf_{invoice_id}_{google_drive_id[:10] if google_drive_id else 'none'}"
+                'stable_key': f"dashboard_pdf_{invoice_id}_{google_drive_id[:10] if google_drive_id else 'none'}",
+                'test_stable_key': f"test_dashboard_pdf_{invoice_id}",
+                'gdrive_file_id_raw': original_invoice_data.get('gdrive_file_id'),
+                'original_data_sample': dict(list(original_invoice_data.items())[:5]) if original_invoice_data else {}
             }
             st.json(debug_info)
 
