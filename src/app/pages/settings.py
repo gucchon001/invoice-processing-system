@@ -51,7 +51,7 @@ def render_dashboard_page():
             # アップロードページへのショートカット
             if st.button("📤 請求書をアップロード", type="primary", use_container_width=True):
                 st.session_state.main_menu = "📤 請求書処理"
-                st.rerun()
+                st.switch_page("pages/invoice_processing.py")  # st.rerun()の代わりにswitch_pageを使用
             return
         
         # ag-gridでデータを表示・編集
@@ -63,6 +63,9 @@ def render_dashboard_page():
         
         # データ更新ボタン
         if st.button("🔄 再試行", use_container_width=True):
+            # セッション状態をクリアして再読み込み
+            if 'dashboard_data_cache' in st.session_state:
+                del st.session_state['dashboard_data_cache']
             st.rerun()
 
 
@@ -88,6 +91,11 @@ def render_invoice_aggrid(invoices_data):
         # ag-gridでデータ表示
         response = aggrid_manager.display_invoice_grid(df)
         
+        # テーブル状態をセッションに保存（リセット防止）
+        if 'last_aggrid_response' not in st.session_state:
+            st.session_state.last_aggrid_response = {}
+        st.session_state.last_aggrid_response = response
+        
         # 選択された行の処理
         selected_rows = response['selected_rows']
         
@@ -103,6 +111,12 @@ def render_invoice_aggrid(invoices_data):
                 # その他の型の場合は空リストにフォールバック
                 logger.warning(f"予期しないselected_rows型: {type(selected_rows)}")
                 normalized_selected_rows = []
+        
+        # 選択状態をセッションに保存（リセット防止）
+        if 'selected_invoice_rows' not in st.session_state:
+            st.session_state.selected_invoice_rows = []
+        if normalized_selected_rows:
+            st.session_state.selected_invoice_rows = normalized_selected_rows
         
         if normalized_selected_rows:
             st.subheader("📝 選択されたデータ")
@@ -560,7 +574,7 @@ def render_pdf_preview_dashboard_stable(result: dict, filename: str):
                 # リセットボタン
                 if st.button("🔄 テストリセット", key=f"reset_test_{invoice_id}"):
                     st.session_state[f"test_clicked_{invoice_id}"] = False
-                    st.rerun()
+                    # st.rerun() を削除 - テーブルリセット問題の修正
                 
                 # 修正内容の説明
                 with st.expander("🔧 修正内容", expanded=True):
