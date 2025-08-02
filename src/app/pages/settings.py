@@ -191,6 +191,17 @@ def delete_selected_invoices(selected_rows):
 def render_invoice_detail_preview(invoice_data: dict):
     """選択された請求書の詳細プレビュー表示"""
     try:
+        # 🔍 一時的なデバッグ表示
+        with st.expander("🔍 デバッグ情報（開発用）", expanded=False):
+            st.write("**受信したinvoice_dataのキー:**")
+            st.code(list(invoice_data.keys()))
+            st.write("**主要フィールドの内容:**")
+            debug_fields = ['file_name', 'issuer_name', 'recipient_name', 'main_invoice_number', 
+                           'total_amount_tax_included', 'currency', 'extracted_data']
+            for field in debug_fields:
+                value = invoice_data.get(field, 'NOT_FOUND')
+                st.write(f"- {field}: {value}")
+        
         # データベースから取得したデータを詳細プレビュー用に変換
         result = convert_db_data_to_preview_format(invoice_data)
         filename = invoice_data.get('file_name', 'unknown.pdf')
@@ -201,28 +212,37 @@ def render_invoice_detail_preview(invoice_data: dict):
     except Exception as e:
         logger.error(f"詳細プレビュー表示エラー: {e}")
         st.error(f"詳細表示中にエラーが発生しました: {e}")
+        # エラー時もデバッグ情報を表示
+        st.write("**エラー時のinvoice_data:**")
+        st.json(invoice_data)
 
 
 def convert_db_data_to_preview_format(invoice_data: dict) -> dict:
     """データベースデータを詳細プレビュー用フォーマットに変換"""
     try:
+        # デバッグ: 実際のデータ構造を確認
+        logger.info(f"🔍 DEBUG - 受信したinvoice_data keys: {list(invoice_data.keys())}")
+        logger.info(f"🔍 DEBUG - invoice_dataサンプル: {dict(list(invoice_data.items())[:5])}")
+        
         # extracted_dataがJSONBフィールドから取得されている場合の処理
         extracted_data = invoice_data.get('extracted_data', {})
         
-        # データベースの40カラムフィールドを統合
+        # データベースの40カラムフィールドを統合（正しいフィールド名で）
         enhanced_extracted_data = {
-            # 基本情報
+            # 基本情報（データベースフィールド名に合わせて修正）
             'issuer': invoice_data.get('issuer_name', ''),
             'payer': invoice_data.get('recipient_name', ''),
-            'main_invoice_number': invoice_data.get('registration_number', ''),
+            'main_invoice_number': invoice_data.get('main_invoice_number', ''),  # 修正
             'receipt_number': invoice_data.get('receipt_number', ''),
             't_number': invoice_data.get('t_number', ''),
             
-            # 金額情報
+            # 金額情報（データベースフィールド名に合わせて修正）
             'amount_inclusive_tax': invoice_data.get('total_amount_tax_included', 0),
             'amount_exclusive_tax': invoice_data.get('total_amount_tax_excluded', 0),
             'tax_amount': (invoice_data.get('total_amount_tax_included', 0) - 
-                          invoice_data.get('total_amount_tax_excluded', 0)),
+                          invoice_data.get('total_amount_tax_excluded', 0)) if 
+                          invoice_data.get('total_amount_tax_included') and 
+                          invoice_data.get('total_amount_tax_excluded') else 0,
             'currency': invoice_data.get('currency', 'JPY'),
             
             # 日付情報
@@ -235,14 +255,28 @@ def convert_db_data_to_preview_format(invoice_data: dict) -> dict:
             'card_statement_id': invoice_data.get('card_statement_id'),
             'approval_status': invoice_data.get('approval_status', 'pending'),
             'approved_by': invoice_data.get('approved_by'),
-            'freee_export_status': invoice_data.get('freee_export_status', 'not_exported'),
+            'approved_at': invoice_data.get('approved_at'),
+            
+            # freee連携情報（正しいフィールド名）
+            'freee_export_status': 'exported' if invoice_data.get('exported_to_freee') else 'not_exported',
+            'freee_id': invoice_data.get('freee_batch_id'),
+            
+            # ファイル関連情報
+            'source_type': invoice_data.get('source_type', 'local'),
+            'gmail_message_id': invoice_data.get('gmail_message_id'),
+            'sender_email': invoice_data.get('sender_email'),
             
             # キー情報
             'key_info': invoice_data.get('key_info', {}),
-            
-            # 既存のextracted_dataの内容もマージ
-            **extracted_data
         }
+        
+        # extracted_dataがJSONBフィールドとして存在する場合、その内容も統合
+        if isinstance(extracted_data, dict) and extracted_data:
+            logger.info(f"🔍 DEBUG - extracted_data内容: {list(extracted_data.keys())}")
+            # extracted_dataの内容で上書きしない場合は、既存の値を優先
+            for key, value in extracted_data.items():
+                if key not in enhanced_extracted_data or not enhanced_extracted_data[key]:
+                    enhanced_extracted_data[key] = value
         
         # 結果フォーマット
         result = {
