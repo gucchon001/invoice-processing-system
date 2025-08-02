@@ -326,30 +326,11 @@ def convert_db_data_to_preview_format(invoice_data: dict) -> dict:
 
 
 def render_enhanced_result_tabs_dashboard(result: dict, filename: str):
-    """ダッシュボード用詳細プレビュー（タブ分割表示）"""
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 基本情報", "📊 明細", "🆕 新機能", "🔍 JSON", "📄 PDF"])
+    """ダッシュボード用詳細プレビュー（既存高機能モジュール再利用）"""
     
-    extracted_data = result.get('extracted_data', {})
-    
-    with tab1:
-        # 基本情報表示
-        render_basic_info_dashboard(extracted_data)
-    
-    with tab2:
-        # 明細情報表示
-        render_line_items_dashboard(extracted_data)
-    
-    with tab3:
-        # 新機能情報表示（40カラム対応）
-        render_new_features_dashboard(extracted_data, result)
-    
-    with tab4:
-        # JSON詳細表示
-        render_json_preview_dashboard(result, extracted_data)
-    
-    with tab5:
-        # PDF表示
-        render_pdf_preview_dashboard(result, filename)
+    # 🎯 既存の高機能プレビューを直接使用（保守性・一貫性向上）
+    from .invoice_processing import render_enhanced_result_tabs
+    render_enhanced_result_tabs(result, filename)
 
 
 def update_invoices_in_database(updated_data):
@@ -391,242 +372,19 @@ def update_invoices_in_database(updated_data):
         logger.debug(f"更新対象データ型: {type(updated_data)}")
 
 
-def render_basic_info_dashboard(extracted_data: dict):
-    """基本情報タブの表示（ダッシュボード用）"""
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("**📝 請求書情報**")
-        st.write(f"• 請求元: {extracted_data.get('issuer', 'N/A')}")
-        st.write(f"• 請求先: {extracted_data.get('payer', 'N/A')}")
-        st.write(f"• 請求書番号: {extracted_data.get('main_invoice_number', 'N/A')}")
-        st.write(f"• 受領書番号: {extracted_data.get('receipt_number', 'N/A')}")
-        st.write(f"• T番号: {extracted_data.get('t_number', 'N/A')}")
-    
-    with col2:
-        st.markdown("**💰 金額情報**")
-        amount_inc = extracted_data.get('amount_inclusive_tax', 0)
-        amount_exc = extracted_data.get('amount_exclusive_tax', 0)
-        tax_amount = extracted_data.get('tax_amount', 0)
-        currency = extracted_data.get('currency', 'JPY')
-        
-        st.write(f"• 税込金額: {currency} {amount_inc:,}" if amount_inc else "• 税込金額: N/A")
-        st.write(f"• 税抜金額: {currency} {amount_exc:,}" if amount_exc else "• 税抜金額: N/A")
-        st.write(f"• 消費税額: {currency} {tax_amount:,}" if tax_amount else "• 消費税額: N/A")
-        st.write(f"• 通貨: {currency}")
-        st.write(f"• 請求日: {extracted_data.get('issue_date', 'N/A')}")
-        st.write(f"• 支払期日: {extracted_data.get('due_date', 'N/A')}")
-    
-    # キー情報の表示
-    key_info = extracted_data.get('key_info', {})
-    if key_info:
-        st.markdown("**🔑 キー情報**")
-        if isinstance(key_info, dict) and key_info:
-            with st.expander("詳細を表示", expanded=False):
-                for key, value in key_info.items():
-                    st.write(f"  - {key}: {value}")
-        else:
-            st.write("• キー情報: なし")
+# 🗑️ 削除: render_basic_info_dashboard -> invoice_processing.render_basic_info_enhanced に統一
 
 
-def render_line_items_dashboard(extracted_data: dict):
-    """明細タブの表示（ダッシュボード用）"""
-    st.markdown("### 📊 請求明細")
-    
-    line_items = extracted_data.get('line_items', [])
-    # NULL値の安全な処理
-    if line_items is None:
-        line_items = []
-    elif not isinstance(line_items, list):
-        line_items = []
-    
-    if line_items:
-        st.write(f"📋 明細数: {len(line_items)}件")
-        
-        # 明細データをDataFrameで表示
-        try:
-            import pandas as pd
-            df_items = pd.DataFrame(line_items)
-            st.dataframe(df_items, use_container_width=True)
-        except Exception as e:
-            st.error(f"明細表示エラー: {e}")
-            st.json(line_items)
-    else:
-        st.info("📋 このファイルには明細データがありません")
+# 🗑️ 削除: render_line_items_dashboard -> invoice_processing.render_line_items_enhanced に統一
 
 
-def render_new_features_dashboard(extracted_data: dict, result: dict):
-    """新機能タブの表示（40カラム対応）"""
-    st.markdown("### 🆕 40カラム新機能情報")
-    st.caption("外貨換算・承認ワークフロー・freee連携の詳細情報")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("**💱 外貨換算機能**")
-        currency = extracted_data.get('currency', 'JPY')
-        if currency != 'JPY':
-            exchange_rate = extracted_data.get('exchange_rate')
-            jpy_amount = extracted_data.get('jpy_amount')
-            card_statement_id = extracted_data.get('card_statement_id')
-            
-            st.write(f"• 通貨: {currency}")
-            st.write(f"• 為替レート: {exchange_rate}" if exchange_rate else "• 為替レート: N/A")
-            st.write(f"• 円換算金額: ¥{jpy_amount:,.0f}" if jpy_amount else "• 円換算金額: N/A")
-            st.write(f"• カード明細ID: {card_statement_id}" if card_statement_id else "• カード明細ID: 未連携")
-        else:
-            st.write("• 外貨換算: 対象外（JPY）")
-        
-        st.markdown("**📊 freee連携状況**")
-        freee_status = extracted_data.get('freee_export_status', 'not_exported')
-        freee_id = extracted_data.get('freee_id')
-        
-        status_mapping = {
-            'not_exported': '❌ 未エクスポート',
-            'exported': '✅ エクスポート済み',
-            'error': '🚨 エラー'
-        }
-        
-        st.write(f"• ステータス: {status_mapping.get(freee_status, freee_status)}")
-        st.write(f"• freee ID: {freee_id}" if freee_id else "• freee ID: N/A")
-    
-    with col2:
-        st.markdown("**✅ 承認ワークフロー**")
-        approval_status = extracted_data.get('approval_status', 'pending')
-        approved_by = extracted_data.get('approved_by')
-        approved_at = extracted_data.get('approved_at')
-        
-        status_mapping = {
-            'pending': '⏳ 承認待ち',
-            'approved': '✅ 承認済み',
-            'rejected': '❌ 却下',
-            'requires_review': '🔍 要確認'
-        }
-        
-        st.write(f"• ステータス: {status_mapping.get(approval_status, approval_status)}")
-        st.write(f"• 承認者: {approved_by}" if approved_by else "• 承認者: N/A")
-        st.write(f"• 承認日時: {approved_at}" if approved_at else "• 承認日時: N/A")
-        
-        st.markdown("**🔍 品質情報**")
-        completeness_score = result.get('completeness_score', 0)
-        processing_time = result.get('processing_time')
-        
-        st.write(f"• 完全性スコア: {completeness_score:.1f}%" if completeness_score else "• 完全性スコア: N/A")
-        st.write(f"• 処理時間: {processing_time:.2f}秒" if processing_time else "• 処理時間: N/A")
+# 🗑️ 削除: render_new_features_dashboard -> invoice_processing.render_new_features_enhanced に統一
 
 
-def render_json_preview_dashboard(result: dict, extracted_data: dict):
-    """JSONタブの表示（ダッシュボード用）"""
-    st.markdown("### 🔍 JSON詳細データ")
-    
-    tab1, tab2, tab3 = st.tabs(["抽出データ", "生レスポンス", "検証結果"])
-    
-    with tab1:
-        st.markdown("**📊 AI抽出データ**")
-        st.json(extracted_data)
-    
-    with tab2:
-        st.markdown("**🤖 AI生レスポンス**")
-        raw_response = result.get('raw_response', {})
-        if raw_response:
-            st.json(raw_response)
-        else:
-            st.info("生レスポンスデータがありません")
-    
-    with tab3:
-        st.markdown("**✅ 検証結果**")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            validation_errors = result.get('validation_errors', [])
-            # NULL値の安全な処理
-            if validation_errors is None:
-                validation_errors = []
-            elif not isinstance(validation_errors, list):
-                validation_errors = []
-            
-            st.write(f"**🚨 エラー**: {len(validation_errors)}件")
-            if validation_errors:
-                for i, error in enumerate(validation_errors, 1):
-                    st.error(f"{i}. {error}")
-        
-        with col2:
-            validation_warnings = result.get('validation_warnings', [])
-            # NULL値の安全な処理
-            if validation_warnings is None:
-                validation_warnings = []
-            elif not isinstance(validation_warnings, list):
-                validation_warnings = []
-            
-            st.write(f"**⚠️ 警告**: {len(validation_warnings)}件")
-            if validation_warnings:
-                for i, warning in enumerate(validation_warnings, 1):
-                    st.warning(f"{i}. {warning}")
+# 🗑️ 削除: render_json_preview_dashboard -> invoice_processing.render_json_preview_enhanced に統一
 
 
-def render_pdf_preview_dashboard(result: dict, filename: str):
-    """PDFタブの表示（ダッシュボード用） - 既存モジュール再利用"""
-    
-    # 🔧 データベースデータを既存の file_info フォーマットに変換
-    original_invoice_data = result.get('_original_invoice_data', {})
-    google_drive_id = result.get('google_drive_id')
-    source_type = result.get('source_type', 'local')
-    
-    # 既存のrender_pdf_preview_enhanced用にfile_infoを構築
-    if google_drive_id:
-        # Google Drive IDが取得できている場合は既存機能を使用
-        file_info = {
-            'file_id': google_drive_id,
-            'file_size': result.get('file_size') or original_invoice_data.get('file_size')
-        }
-        result_for_enhanced = {
-            'file_info': file_info,
-            **result
-        }
-        
-        # 🎯 既存の高機能PDFプレビューを使用
-        from .invoice_processing import render_pdf_preview_enhanced
-        render_pdf_preview_enhanced(result_for_enhanced, filename)
-        
-    else:
-        # Google Drive IDがない場合は従来のダッシュボード表示
-        st.markdown("### 📄 PDFファイル")
-        st.info(f"📄 ファイル名: {filename}")
-        st.write(f"📁 ソース: {source_type}")
-        
-        if source_type == 'gdrive':
-            st.warning("📄 Google Drive PDFファイル情報が見つかりません")
-            st.info("💡 データベースにGoogle Drive IDが保存されていない可能性があります")
-            
-            # データベース調査のための情報
-            with st.expander("🔍 データベース調査情報", expanded=False):
-                st.write("**問題の可能性:**")
-                st.write("1. 処理時にGoogle Drive IDがデータベースに保存されていない")
-                st.write("2. `gdrive_file_id` カラムへの値挿入に問題がある")
-                st.write("3. データベース取得クエリに問題がある")
-                
-                st.write("**確認すべきデータ:**")
-                debug_info = {
-                    'google_drive_id': google_drive_id,
-                    'source_type': source_type,
-                    'original_data_keys': list(original_invoice_data.keys()) if original_invoice_data else [],
-                    'gdrive_file_id_raw': original_invoice_data.get('gdrive_file_id') if original_invoice_data else None,
-                    'file_path': result.get('file_path')
-                }
-                st.json(debug_info)
-                
-        elif source_type == 'local':
-            file_path = result.get('file_path', '')
-            if file_path:
-                st.write(f"📂 ファイルパス: {file_path}")
-                st.info("🚧 ローカルPDFプレビューは今後実装予定です")
-            else:
-                st.warning("📄 ローカルファイル情報が見つかりません")
-        
-        else:
-            st.warning("📄 PDFファイル情報が見つかりません")
-            st.info("💡 ファイルソースが不明または未対応の形式です")
+# 🗑️ 削除: render_pdf_preview_dashboard -> invoice_processing.render_pdf_preview_enhanced に統一
 
 
 def render_settings_page():
